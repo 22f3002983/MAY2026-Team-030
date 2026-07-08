@@ -1,0 +1,188 @@
+/* ============================================================
+   Niwaas — Design Token Variables
+   All colors, spacing, radius, and shadow values live here.
+   Never hardcode hex values in component files.
+   Import this once in main.js — available globally.
+============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+
+:root {
+
+  /* ── Primary Color Scale (navy → powder blue) ── */
+  --c-900: #001D39;   /* Sidebar bg, darkest headers, deepest navy */
+  --c-800: #0A4174;   /* Primary buttons, active nav, links */
+  --c-600: #49769F;   /* Secondary buttons, borders, icon fills */
+  --c-500: #4E8EA2;   /* Status badges, highlights, teal accent */
+  --c-400: #6EA2B3;   /* Muted backgrounds, disabled states */
+  --c-300: #78BDE9;   /* Light blue, notification dots, progress */
+  --c-100: #80D8E9;   /* Lightest, card backgrounds, success tint */
+
+  /* ── Semantic Aliases ── */
+  --color-primary:       var(--c-800);
+  --color-primary-dark:  var(--c-900);
+  --color-primary-mid:   var(--c-600);
+  --color-accent:        var(--c-500);
+  --color-accent-light:  var(--c-100);
+
+  /* ── Surface & Background ── */
+  --color-bg:            #EEF3F8;   /* App-level background */
+  --color-surface:       #FFFFFF;   /* Cards, panels, modals */
+  --color-surface-soft:  #F6FAFD;   /* Input fields, subtle fills */
+  --color-surface-muted: #F1F5F9;   /* Hover backgrounds */
+
+  /* ── Border Colors ── */
+  --color-border:        #E4EBF2;   /* Standard borders */
+  --color-border-soft:   #DCE6EF;   /* Input borders */
+  --color-border-strong: #C7D6E4;   /* Scrollbar, dividers */
+
+  /* ── Text Colors ── */
+  --color-text-primary:   #0F2942;  /* Main body text */
+  --color-text-secondary: #5A768C;  /* Subtitles, labels */
+  --color-text-muted:     #8298AC;  /* Timestamps, meta info */
+  --color-text-inverse:   #FFFFFF;  /* Text on dark backgrounds */
+
+  /* ── Sidebar Specific ── */
+  --color-sidebar-bg:       #001D39;
+  --color-sidebar-text:     rgba(255,255,255,0.85);
+  --color-sidebar-muted:    rgba(255,255,255,0.45);
+  --color-sidebar-hover:    rgba(255,255,255,0.06);
+  --color-sidebar-active:   rgba(255,255,255,0.12);
+  --color-sidebar-border:   rgba(255,255,255,0.09);
+
+  /* ── Status Colors ── */
+  --color-success:       #22C55E;
+  --color-success-bg:    #DCFCE7;
+  --color-success-text:  #15803D;
+
+  --color-warning:       #F59E0B;
+  --color-warning-bg:    #FEF3C7;
+  --color-warning-text:  #92400E;
+
+  --color-danger:        #EF4444;
+  --color-danger-bg:     #FEE2E2;
+  --color-danger-text:   #B91C1C;
+
+  --color-info:          var(--c-300);
+  --color-info-bg:       #DBEAFE;
+  --color-info-text:     var(--c-800);
+
+  /* ── Complaint / Badge Status Colors ── */
+  --badge-open-bg:       #DBEAFE;
+  --badge-open-text:     #1E40AF;
+  --badge-progress-bg:   #FEF3C7;
+  --badge-progress-text: #92400E;
+  --badge-resolved-bg:   #DCFCE7;
+  --badge-resolved-text: #15803D;
+  --badge-closed-bg:     #F3F4F6;
+  --badge-closed-text:   #6B7280;
+  --badge-high-bg:       #FEE2E2;
+  --badge-high-text:     #B91C1C;
+  --badge-medium-bg:     #FEF3C7;
+  --badge-medium-text:   #92400E;
+  --badge-low-bg:        #DCFCE7;
+  --badge-low-text:      #15803D;
+
+  /* ── Border Radius ── */
+  --radius-xs:  6px;
+  --radius-sm:  8px;
+  --radius-md:  11px;
+  --radius-lg:  15px;
+  --radius-xl:  20px;
+  --radius-pill: 999px;
+
+  /* ── Shadows ── */
+  --shadow-xs:  0 1px 2px rgba(10, 65, 116, 0.05);
+  --shadow-sm:  0 2px 6px rgba(10, 65, 116, 0.08);
+  --shadow-md:  0 4px 12px rgba(10, 65, 116, 0.12);
+  --shadow-lg:  0 8px 24px rgba(10, 65, 116, 0.16);
+  --shadow-btn: 0 6px 16px rgba(10, 65, 116, 0.25);
+
+  /* ── Typography ── */
+  --font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  --font-size-xs:   11px;
+  --font-size-sm:   12px;
+  --font-size-base: 13px;
+  --font-size-md:   14px;
+  --font-size-lg:   15px;
+  --font-size-xl:   16px;
+  --font-size-2xl:  18px;
+  --font-size-3xl:  22px;
+  --font-size-4xl:  26px;
+  --font-size-5xl:  30px;
+  --font-size-hero: 42px;
+
+  /* ── Layout ── */
+  --sidebar-width:         250px;
+  --sidebar-width-collapsed: 70px;
+  --header-height:         64px;
+  --content-max-width:     1140px;
+  --content-padding:       26px;
+
+  /* ── Transition ── */
+  --transition-fast:   0.12s ease;
+  --transition-base:   0.18s ease;
+  --transition-slow:   0.28s ease;
+
+  /* ── Z-index Scale ── */
+  --z-sidebar:   100;
+  --z-header:    200;
+  --z-modal:     300;
+  --z-toast:     400;
+}
+
+/* ── Global Reset ── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-family);
+  font-size: var(--font-size-md);
+  color: var(--color-text-primary);
+  background: var(--color-bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+}
+
+input, select, textarea {
+  font-family: inherit;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: var(--radius-pill);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--c-600); }
+
+/* ── Utility Classes ── */
+.truncate {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0,0,0,0);
+}

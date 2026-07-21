@@ -9,7 +9,9 @@ const route = useRoute()
 const auth = useAuthStore()
 
 // login page has no sidebar or navbar
-const showLayout = computed(() => route.name !== 'login')
+const showLayout = computed(() => {
+  return !['login', 'landing'].includes(route.name)
+})
 </script>
 
 <template>

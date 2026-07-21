@@ -56,13 +56,21 @@ function logout() {
   auth.logout()
   router.push('/')
 }
+
+function goHome() {
+  if (auth.role === 'security') {
+    router.push('/gate/dashboard')
+  } else {
+    router.push('/dashboard')
+  }
+}
 </script>
 
 <template>
   <aside class="sidebar">
 
     <!-- logo -->
-    <div class="sidebar-logo">
+    <div class="sidebar-logo" @click="goHome">
       <div class="logo-mark">N</div>
       <div class="logo-text">
         <span class="logo-name">Niwaas</span>
@@ -123,6 +131,7 @@ function logout() {
   gap: 12px;
   padding: 24px 20px 16px;
   border-bottom: 1px solid var(--color-sidebar-border);
+  cursor: pointer;
 }
 
 .logo-mark {

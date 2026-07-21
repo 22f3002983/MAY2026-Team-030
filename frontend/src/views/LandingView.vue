@@ -21,7 +21,7 @@ const navLinks = [
 
 const stats = [
   { value: '240', label: 'Flats managed' },
-  { value: '4', label: 'Role-based portals' },
+  { value: '3', label: 'Role-based portals' },
   { value: '12k+', label: 'Complaints resolved' },
   { value: '<15m', label: 'Avg alert response' },
 ]
@@ -84,12 +84,6 @@ const roles = [
     name: 'Security',
     desc: 'Verify gate passes instantly and keep a live log of every visitor checking in and out.',
   },
-  {
-    icon: '🔧',
-    grad: 'linear-gradient(150deg, #49769F, #001D39)',
-    name: 'Vendor',
-    desc: 'Get notified the moment a job is assigned, with everything you need to get it done right.',
-  },
 ]
 
 const steps = [
@@ -101,7 +95,7 @@ const steps = [
   {
     n: '02',
     title: 'Pick your portal',
-    body: 'Resident, secretary, security or vendor — everyone gets a dashboard built for exactly their job.',
+    body: 'Resident, secretary or security — everyone gets a dashboard built for exactly their job.',
   },
   {
     n: '03',
@@ -139,7 +133,7 @@ const steps = [
         <div class="hero-left">
           <div class="hero-pill"><span class="pill-dot"></span>Raghvendra Sai Society · Hyderabad</div>
           <h1 class="hero-title">Your society,<br><span class="hero-title-accent">running itself.</span></h1>
-          <p class="hero-desc">Complaints, amenities, visitors, dues and emergencies — one calm, beautiful platform for residents, secretary, security and vendors.</p>
+          <p class="hero-desc">Complaints, amenities, visitors, dues and emergencies — one calm, beautiful platform for residents, secretary and security.</p>
           <p class="hero-tagline">"Dial a Secretary… Not Anymore."</p>
           <div class="hero-actions">
             <button class="btn-cta" @click="goToLogin">Get started →</button>
@@ -233,7 +227,7 @@ const steps = [
       <div class="section-inner">
         <div class="section-head">
           <div class="eyebrow eyebrow-light">Built for everyone at the gate & beyond</div>
-          <h2 class="section-title section-title-light">Four portals, one society</h2>
+          <h2 class="section-title section-title-light">Three portals, one society</h2>
           <p class="section-sub section-sub-light">Every role gets a focused dashboard — no clutter, no guesswork. Pick yours to jump straight in.</p>
         </div>
         <div class="roles-grid">
@@ -254,13 +248,13 @@ const steps = [
           <div class="eyebrow">About Niwaas</div>
           <h2 class="about-title">Less WhatsApp chaos. More community.</h2>
           <p class="about-p">Niwaas was built for Raghvendra Sai Society to replace endless secretary phone calls and scattered group messages with one shared, transparent system. Every complaint, booking, visitor and payment lives in one trail everyone can trust.</p>
-          <p class="about-p">Residents raise and track issues in seconds, the committee manages the whole society from a single desk, security verifies visitors instantly, and vendors know exactly what needs doing.</p>
-          <div class="about-checklist">
+          <p class="about-p">
+Residents raise and track issues in seconds, the committee manages the whole society from a single desk, and security verifies visitors instantly.
+</p>
             <div class="check-item"><span class="check-icon">✓</span>Transparent, tamper-proof records for the whole society</div>
             <div class="check-item"><span class="check-icon">✓</span>AI that routes complaints to the right vendor, faster</div>
             <div class="check-item"><span class="check-icon">✓</span>Emergency alerts that reach the gate in seconds</div>
           </div>
-        </div>
         <div class="about-side">
           <div class="quote-card">
             <div class="quote-mark">"</div>

@@ -1,12 +1,13 @@
 import { createRouter, createWebHistory } from "vue-router";
 import { useAuthStore } from "../stores/auth";
+import LandingView from '@/views/LandingView.vue';
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     // public route - no login needed
     {
-      path: "/",
+      path: "/login",
       name: "login",
       component: () => import("../views/LoginView.vue"),
     },
@@ -18,6 +19,12 @@ const router = createRouter({
       component: () => import("../views/DashboardView.vue"),
       meta: { requiresAuth: true },
     },
+    {
+      path: '/',
+      name: 'landing',
+      component: LandingView
+    },
+
     {
       path: '/services',
       name: 'services-request',
@@ -158,10 +165,9 @@ router.beforeEach((to, from, next) => {
 
   // not logged in + protected route → go to login
   if (to.meta.requiresAuth && !auth.isLoggedIn) {
-    next({ name: 'login' })
+    next({ name: 'landing' })
     return
   }
-
   // logged in + wrong role for this route → go to correct home
   if (to.meta.role && to.meta.role !== auth.role) {
     next({ name: auth.role === 'security' ? 'gate-dashboard' : 'dashboard' })

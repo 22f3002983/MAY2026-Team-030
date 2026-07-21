@@ -19,9 +19,9 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
-      path: '/complaints/raise',
-      name: 'raise-complaint',
-      component: () => import('../views/resident/ComplaintRaiseView.vue'),
+      path: '/services',
+      name: 'services-request',
+      component: () => import('../views/resident/ServiceRequestView.vue'),
       meta: { requiresAuth: true, role: 'resident' }
     },
     {
@@ -66,6 +66,12 @@ const router = createRouter({
       component: () => import("../views/resident/MaintenanceDuesView.vue"),
       meta: { requiresAuth: true, role: "resident" },
     },
+    {
+      path: "/documents",
+      name: "documents",
+      component: () => import("../views/resident/DocumentsView.vue"),
+      meta: { requiresAuth: true, role: "resident" },
+    },
 
     // // secretary routes
     {
@@ -99,6 +105,12 @@ const router = createRouter({
       meta: { requiresAuth: true, role: "secretary" },
     },
     {
+      path: '/sec/amenities',
+      name: 'sec-amenities',
+      component: () => import('../views/secretary/SecAmenitiesView.vue'),
+      meta: { requiresAuth: true, role: 'secretary' }
+    },
+    {
       path: '/sec/residents',
       name: 'sec-residents',
       component: () => import('../views/secretary/SecResidentsView.vue'),
@@ -109,6 +121,12 @@ const router = createRouter({
       name: 'sec-maintenance',
       component: () => import('../views/secretary/SecMaintenanceView.vue'),
       meta: { requiresAuth: true, role: 'secretary' }
+    },
+    {
+      path: "/sec/documents",
+      name: "sec-documents",
+      component: () => import("../views/secretary/SecDocumentsView.vue"),
+      meta: { requiresAuth: true, role: "secretary" },
     },
 
     // // security routes

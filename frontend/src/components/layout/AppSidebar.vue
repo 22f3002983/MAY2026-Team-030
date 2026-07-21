@@ -17,6 +17,7 @@ const navItems = computed(() => {
       { label: 'Visitors',     icon: '👤', to: '/visitors' },
       { label: 'Emergency',    icon: '🚨', to: '/emergency' },
       { label: 'Maintenance',  icon: '💳', to: '/maintenance' },
+      { label: 'Documents',  icon: '📄', to: '/documents' },
       { label: 'Profile',      icon: '◉', to: '/profile' },
     ]
   }
@@ -25,12 +26,14 @@ const navItems = computed(() => {
     return [
       { label: 'Dashboard',    icon: '⊞', to: '/dashboard' },
       { label: 'Complaints',   icon: '⚠', to: '/sec/complaints' },
-      { label: 'Vendors',      icon: '🔧', to: '/sec/vendors' },
-      { label: 'Vendor Jobs', icon: '📋', to: '/sec/vendors/jobs' },
       { label: 'Notices',      icon: '🔔', to: '/sec/notices' },
       { label: 'Emergency',    icon: '🚨', to: '/sec/emergency' },
-      { label: 'Residents',    icon: '👥', to: '/sec/residents' },
       { label: 'Maintenance',  icon: '💳', to: '/sec/maintenance' },
+      { label: 'Residents',    icon: '👥', to: '/sec/residents' },
+      { label: 'Documents',  icon: '📄', to: '/sec/documents' },
+      { label: 'Amenities',  icon: '🏢', to: '/sec/amenities' },
+      { label: 'Vendors',      icon: '🔧', to: '/sec/vendors' },
+      { label: 'Vendor Jobs', icon: '📋', to: '/sec/vendors/jobs' },
     ]
   }
 

@@ -8,13 +8,16 @@ const isEditing  = ref(false)
 const successMsg = ref('')
 
 const profile = ref({
-  name:         'Ravi Kumar',
-  flat:         'A-402, A Wing',
-  email:        'ravi@raghvendrasai.in',
-  phone:        '+91 98480 11771',
-  members:      '4 (2 adults, 2 kids)',
-  vehicle:      'TS09 AB 4402',
-  occupant_type:'Owner',
+  name:          'Ravi Kumar',
+  flat:          'A-402, A Wing',
+  email:         'ravi@raghvendrasai.in',
+  phone:         '+91 98480 11771',
+  members:       '4 (2 adults, 2 kids)',
+  vehicle1:       'Hero Honda (2 Wheeler)',
+  vehicle1_no:       'TS09 AB 4402',
+  vehicle2:      'Kia Carens (4 Wheeler)',
+  vehicle2_no:      'TS09 XY 7812',
+  occupant_type: 'Owner',
 })
 
 // editable copy — only committed on save
@@ -37,17 +40,22 @@ function saveEdit() {
   // placeholder - replace with API call in Sprint 1
   profile.value   = { ...draft.value }
   isEditing.value = false
-  successMsg.value = 'Profile updated successfully. Changes are pending secretary approval.'
+  successMsg.value = 'Profile updated successfully.'
   setTimeout(() => successMsg.value = '', 5000)
 }
 
 const profileFields = computed(() => [
-  { key: 'Full name',     value: profile.value.name,         field: 'name'         },
-  { key: 'Flat number',   value: profile.value.flat,         field: 'flat'         },
-  { key: 'Email',         value: profile.value.email,        field: 'email'        },
-  { key: 'Phone',         value: profile.value.phone,        field: 'phone'        },
-  { key: 'Members',       value: profile.value.members,      field: 'members'      },
-  { key: 'Vehicle',       value: profile.value.vehicle,      field: 'vehicle'      },
+  { key: 'Full name',          value: profile.value.name,         field: 'name' },
+  { key: 'Flat number',        value: profile.value.flat,         field: 'flat' },
+  { key: 'Email',              value: profile.value.email,        field: 'email' },
+  { key: 'Phone',              value: profile.value.phone,        field: 'phone' },
+  { key: 'Members',            value: profile.value.members,      field: 'members' },
+
+  { key: 'Vehicle 1 Name',     value: profile.value.vehicle1,     field: 'vehicle1' },
+  { key: 'Vehicle 1 Number',   value: profile.value.vehicle1_no,  field: 'vehicle1_no' },
+
+  { key: 'Vehicle 2 Name',     value: profile.value.vehicle2,     field: 'vehicle2' },
+  { key: 'Vehicle 2 Number',   value: profile.value.vehicle2_no,  field: 'vehicle2_no' },
 ])
 </script>
 
@@ -119,10 +127,6 @@ const profileFields = computed(() => [
               type="text"
             />
           </div>
-        </div>
-
-        <div v-if="isEditing" class="edit-note">
-          Profile changes require secretary approval before they take effect.
         </div>
 
       </div>
@@ -363,14 +367,4 @@ label {
   cursor: not-allowed;
 }
 
-.edit-note {
-  margin-top: 16px;
-  padding: 10px 14px;
-  background: var(--color-info-bg);
-  color: var(--color-info-text);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  line-height: 1.5;
-}
 </style>

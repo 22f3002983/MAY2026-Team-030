@@ -28,11 +28,11 @@ def create_app():
     # from app.routes.complaints import complaints_bp
     # flask_app.register_blueprint(complaints_bp, url_prefix='/api/complaints')
 
-    # from app.routes.vendors import vendors_bp
-    # flask_app.register_blueprint(vendors_bp, url_prefix='/api/vendors')
+    from app.routes.vendors import vendors_bp
+    flask_app.register_blueprint(vendors_bp, url_prefix='/api/vendors')
 
-    # from app.routes.notices import notices_bp
-    # flask_app.register_blueprint(notices_bp, url_prefix='/api/notices')
+    #from app.routes.notices import notices_bp
+    #flask_app.register_blueprint(notices_bp, url_prefix='/api/notices')
 
     # from app.routes.dues import dues_bp
     # flask_app.register_blueprint(dues_bp, url_prefix='/api/dues')
@@ -40,8 +40,8 @@ def create_app():
     # from app.routes.emergency import emergency_bp
     # flask_app.register_blueprint(emergency_bp, url_prefix='/api/emergency')
 
-    # from app.routes.visitors import visitors_bp
-    # flask_app.register_blueprint(visitors_bp, url_prefix='/api/visitors')
+    from app.routes.visitors import visitors_bp
+    flask_app.register_blueprint(visitors_bp, url_prefix='/api/visitors')
 
     # from app.routes.amenities import amenities_bp
     # flask_app.register_blueprint(amenities_bp, url_prefix='/api/amenities')

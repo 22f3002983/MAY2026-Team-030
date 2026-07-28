@@ -17,6 +17,7 @@ function residentForFlat(flat) {
 }
 
 let nextId = 100
+const API = 'http://127.0.0.1:5000/api'
 function generateId() { return nextId++ }
 
 function generatePassCode() {
@@ -168,24 +169,21 @@ function statusLabel(status) {
 const passCode = ref('')
 const verifyResult = ref(null)
 
-function verify() {
+async function verify() {
   const code = passCode.value.trim().toUpperCase()
   if (!code) return
 
-  const record = passRecords.value.find(v => v.pass_code && v.pass_code.toUpperCase() === code)
+  const res = await fetch(`${API}/visitors/verify`, {
+    method: 'PATCH', credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pass_code: code }),
+  })
 
-  if (!record) {
+  if (!res.ok) {
     verifyResult.value = { outcome: 'not_found' }
-  } else if (record.revoked_at) {
-    verifyResult.value = { outcome: 'revoked', visitor: record }
-  } else if (record.pass_code_expiry && new Date() > new Date(record.pass_code_expiry)) {
-    verifyResult.value = { outcome: 'expired', visitor: record }
-  } else if (record.status === 'checked_in') {
-    verifyResult.value = { outcome: 'already_in', visitor: record }
-  } else if (record.status === 'checked_out') {
-    verifyResult.value = { outcome: 'already_used', visitor: record }
   } else {
-    verifyResult.value = { outcome: 'valid', visitor: record }
+    const data = await res.json()
+    verifyResult.value = { outcome: 'valid', visitor: data.visitor }
   }
   passCode.value = ''
 }
@@ -196,21 +194,22 @@ function closeVerifyModal() {
 
 // ADDED: real check-in — was missing entirely before (old "approve" only
 // worked on the in-memory queue, never touched an actual pass record).
-function checkIn(record) {
+async function checkIn(record) {
+  await fetch(`${API}/visitors/${record.id}/checkin`, { method: 'PATCH', credentials: 'include' })
   record.status = 'checked_in'
   record.check_in_time = new Date().toISOString()
-  record.times_code_used += 1
 }
 
 // ADDED: check-out — did not exist before at all.
-function checkOut(record) {
+async function checkOut(record) {
+  await fetch(`${API}/visitors/${record.id}/checkout`, { method: 'PATCH', credentials: 'include' })
   record.status = 'checked_out'
   record.check_out_time = new Date().toISOString()
 }
 
-function rejectAtGate(record) {
+async function rejectAtGate(record) {
+  await fetch(`${API}/visitors/${record.id}/reject`, { method: 'PATCH', credentials: 'include' })
   record.status = 'rejected'
-  record.check_in_time = record.check_in_time || new Date().toISOString()
 }
 
 // =====================================================================

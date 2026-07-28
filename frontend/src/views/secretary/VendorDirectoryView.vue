@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 
 /* ---------------------------------------------------------------
    Vendor Management — Secretary-owned.
@@ -13,87 +13,18 @@ const filterCategory = ref('all')
 const filterPayType = ref('all')     // 'all' | 'salaried' | 'not_salaried'
 const filterStatus = ref('all')      // 'all' | 'active' | 'inactive' | 'blacklisted'
 const showAddForm = ref(false)
+const API = 'http://127.0.0.1:5000/api'
 
 // mock data - replace with API call in Sprint 1
-const vendors = ref([
-  {
-    id: 1,
-    name: 'Kishore Plumbing',
-    phone: '+91 98480 11223',
-    category: 'Plumbing',
-    working_hours: '8 AM – 8 PM',
-    status: 'active',
-    is_salaried: false,
-    salary_amount: null,
-    created_at: '2026-02-11',
-  },
-  {
-    id: 2,
-    name: 'Raju Electricals',
-    phone: '+91 97400 33441',
-    category: 'Electrical',
-    working_hours: '9 AM – 7 PM',
-    status: 'active',
-    is_salaried: false,
-    salary_amount: null,
-    created_at: '2026-02-11',
-  },
-  {
-    id: 3,
-    name: 'Suresh Carpentry',
-    phone: '+91 96300 22110',
-    category: 'Carpentry',
-    working_hours: '10 AM – 6 PM',
-    status: 'active',
-    is_salaried: false,
-    salary_amount: null,
-    created_at: '2026-03-02',
-  },
-  {
-    id: 4,
-    name: 'Clean Society',
-    phone: '+91 95200 44332',
-    category: 'Cleaning',
-    working_hours: '7 AM – 5 PM',
-    status: 'active',
-    is_salaried: true,
-    salary_amount: 18000,
-    created_at: '2026-01-15',
-  },
-  {
-    id: 5,
-    name: 'Manoj Kumar (Security)',
-    phone: '+91 94400 55667',
-    category: 'Security',
-    working_hours: '24x7 shift rotation',
-    status: 'active',
-    is_salaried: true,
-    salary_amount: 22000,
-    created_at: '2026-01-15',
-  },
-  {
-    id: 6,
-    name: 'Ramesh (Gardener)',
-    phone: '+91 93200 88123',
-    category: 'Gardening',
-    working_hours: '7 AM – 11 AM',
-    status: 'inactive',
-    is_salaried: true,
-    salary_amount: 12000,
-    created_at: '2026-01-15',
-  },
-  {
-    id: 7,
-    name: 'QuickFix Electricals',
-    phone: '+91 90000 11122',
-    category: 'Electrical',
-    working_hours: '10 AM – 8 PM',
-    status: 'blacklisted',
-    is_salaried: false,
-    salary_amount: null,
-    created_at: '2026-04-01',
-  },
-])
+const vendors = ref([])
+
+async function fetchVendors() {
+  const res = await fetch(`${API}/vendors?status=`, { credentials: 'include' })
+  const data = await res.json()
+  vendors.value = data.vendors || []
+}
+
+onMounted(fetchVendors)
 
 // salary payments recorded through the Pay Salaries flow
 const paymentHistory = ref([
@@ -150,7 +81,7 @@ function closeForm() {
   showAddForm.value = false
 }
 
-function saveVendor() {
+async function saveVendor() {
   formError.value = ''
 
   if (!form.value.name.trim() || !form.value.phone.trim() || !form.value.category) {
@@ -164,33 +95,42 @@ function saveVendor() {
 
   const payload = {
     ...form.value,
-    salary_amount: form.value.is_salaried ? Number(form.value.salary_amount) : null,
+    salary: form.value.is_salaried ? Number(form.value.salary_amount) : null,
   }
 
   if (editingId.value) {
-    const idx = vendors.value.findIndex(v => v.id === editingId.value)
-    vendors.value[idx] = { ...vendors.value[idx], ...payload }
+    await fetch(`${API}/vendors/${editingId.value}`, {
+      method: 'PATCH', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
     showToast(`${payload.name} updated`)
   } else {
-    vendors.value.push({
-      id: Math.max(0, ...vendors.value.map(v => v.id)) + 1,
-      created_at: new Date().toISOString().slice(0, 10),
-      ...payload,
+    await fetch(`${API}/vendors`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
     })
     showToast(`${payload.name} added to the directory`)
   }
 
+  await fetchVendors()
   closeForm()
 }
 
-function setStatus(vendor, status) {
+async function setStatus(vendor, status) {
+  await fetch(`${API}/vendors/${vendor.id}`, {
+    method: 'PATCH', credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
+  })
   vendor.status = status
   showToast(`${vendor.name} marked ${status}`)
 }
-
-function removeVendor(vendor) {
+async function removeVendor(vendor) {
   const confirmed = window.confirm(`Remove ${vendor.name} from the directory? This can't be undone.`)
   if (!confirmed) return
+  await fetch(`${API}/vendors/${vendor.id}`, { method: 'DELETE', credentials: 'include' })
   vendors.value = vendors.value.filter(v => v.id !== vendor.id)
   paymentHistory.value = paymentHistory.value.filter(p => p.vendorId !== vendor.id)
   showToast(`${vendor.name} removed`)

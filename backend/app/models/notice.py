@@ -13,7 +13,7 @@ class Notice(db.Model):
     created_at  = db.Column(db.DateTime,    default=__import__('datetime').datetime.utcnow)
     is_active   = db.Column(db.Boolean,     default=True)
 
-    priority    = db.Column(db.Enum('high', 'medium', 'low', name='notice_priority'), nullable=True)
+    priority    = db.Column(db.Enum('normal', 'urgent', name='notice_priority'), nullable=True)
 
     def __repr__(self):
         return f'<Notice {self.title}>'

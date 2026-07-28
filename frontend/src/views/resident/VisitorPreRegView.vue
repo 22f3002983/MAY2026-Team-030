@@ -3,6 +3,14 @@ import { ref, computed } from 'vue'
 import { useAuthStore } from '../../stores/auth'
 
 const auth = useAuthStore()
+const API = 'http://127.0.0.1:5000/api'
+
+async function loadVisitors() {
+  const res = await fetch(`${API}/visitors`, { credentials: 'include' })
+  const data = await res.json()
+  // keep using your existing local 'visitors' ref, just refresh it from real data
+  return data.visitors || []
+}
 
 const mode        = ref('Pre-register')
 const visitorName = ref('')
@@ -224,7 +232,7 @@ function approveUnexpected(alert) {
   dismissAlert(alert.id)
 }
 
-function submit() {
+async function submit() {
   formError.value = ''
 
   if (!visitorName.value.trim()) { formError.value = 'Visitor name is required'; return }
@@ -259,19 +267,22 @@ function submit() {
     successMsg.value = `Pass updated for ${visitorName.value}`
     editingId.value = null
   } else {
-    const code = generateCode()
-    visitors.value.unshift({
-      id: generateId(), name: visitorName.value, phone: phone.value || '—',
-      date: expectedDate.value || (mode.value === 'Walk-in' ? 'Today' : 'No fixed date'),
-      time: expectedTime.value || (mode.value === 'Walk-in' ? 'Now' : ''),
-      flat: 'A-402', code, status: 'expected', purpose: purpose.value || 'Visit',
-      pass_type: mode.value === 'Walk-in' ? 'walk_in' : 'pre_register',
-      created_at: new Date().toISOString(), expiry_at: expiry_at.toISOString(),
-      revoked: false, revoked_at: null, visit_log: [],
+    const res = await fetch(`${API}/visitors`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: visitorName.value,
+        phone: phone.value,
+        expected_date: expectedDate.value || null,
+        expected_time: expectedTime.value || null,
+        reason: purpose.value,
+      }),
     })
-    successMsg.value = `Gate pass ${code} generated for ${visitorName.value}`
+    const data = await res.json()
+    successMsg.value = `Gate pass ${data.pass_code} generated for ${visitorName.value}`
+    // refresh the list from real data instead of pushing a fake local object
+    visitors.value = await loadVisitors()
   }
-
   visitorName.value = ''; phone.value = ''; expectedDate.value = ''; expectedTime.value = ''
   purpose.value = ''; walkinDuration.value = 15; preregDuration.value = 'day_of'; customExpiryDate.value = ''
   setTimeout(() => successMsg.value = '', 5000)

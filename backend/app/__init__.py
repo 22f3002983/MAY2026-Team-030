@@ -33,6 +33,7 @@ def create_app():
 
     #from app.routes.notices import notices_bp
     #flask_app.register_blueprint(notices_bp, url_prefix='/api/notices')
+   
 
     # from app.routes.dues import dues_bp
     # flask_app.register_blueprint(dues_bp, url_prefix='/api/dues')

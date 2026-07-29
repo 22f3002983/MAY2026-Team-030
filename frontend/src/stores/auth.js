@@ -1,28 +1,42 @@
 import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
+import api from '../api/axios'
 
 export const useAuthStore = defineStore('auth', () => {
 
-  const user = ref(null)
+  const user = ref(JSON.parse(localStorage.getItem('niwaas_user') || 'null'))
 
   const isLoggedIn = computed(() => user.value !== null)
   const role = computed(() => user.value?.role || null)
   const name = computed(() => user.value?.name || '')
 
-  function login(userData) {
-    user.value = userData
-    localStorage.setItem('niwaas_user', JSON.stringify(userData))
+  async function login(email, password) {
+    const response = await api.post('/auth/login', { email, password })
+    user.value = response.data.user
+    localStorage.setItem('niwaas_user', JSON.stringify(response.data.user))
+    return response.data.user
   }
 
-  function logout() {
-    user.value = null
-    localStorage.removeItem('niwaas_user')
+  async function logout() {
+    try {
+      await api.post('/auth/logout')
+    } catch (err) {
+      // even if API call fails, clear local state
+    } finally {
+      user.value = null
+      localStorage.removeItem('niwaas_user')
+    }
   }
 
-  function restoreSession() {
+  async function restoreSession() {
     const saved = localStorage.getItem('niwaas_user')
     if (saved) user.value = JSON.parse(saved)
   }
 
-  return { user, isLoggedIn, role, name, login, logout, restoreSession }
+  function setUser(updatedUser) {
+    user.value = updatedUser
+    localStorage.setItem('niwaas_user', JSON.stringify(updatedUser))
+  }
+
+  return { user, isLoggedIn, role, name, login, logout, restoreSession, setUser }
 })

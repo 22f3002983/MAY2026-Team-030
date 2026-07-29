@@ -10,6 +10,7 @@ const selectedRole = ref("resident");
 const email = ref("");
 const password = ref("");
 const error = ref("");
+const loading = ref(false);
 
 const roles = [
   { value: "resident", label: "Resident" },
@@ -17,27 +18,33 @@ const roles = [
   { value: "security", label: "Security" },
 ];
 
-function login() {
+async function login() {
   error.value = "";
+  loading.value = true;
 
   if (!email.value || !password.value) {
     error.value = "Please enter your email and password";
+    loading.value = false;
     return;
   }
 
-  // placeholder login - replace with real API call in Sprint 1
-  auth.login({
-    id: "mock-001",
-    name: "Sahil Raaj Kapur",
-    email: email.value,
-    role: selectedRole.value,
-  });
+  try {
+    const user = await auth.login(email.value, password.value);
 
-  if (selectedRole.value === 'security') {
-  router.push('/gate/dashboard')
-} else {
-  router.push('/dashboard')
-}
+    if (user.role === "security") {
+      router.push("/gate/dashboard");
+    } else {
+      router.push("/dashboard");
+    }
+  } catch (err) {
+    if (err.response?.status === 401) {
+      error.value = "Invalid email or password";
+    } else {
+      error.value = "Something went wrong. Please try again.";
+    }
+  } finally {
+    loading.value = false;
+  }
 }
 </script>
 
@@ -69,14 +76,14 @@ function login() {
 
     <!-- right panel - form -->
     <div class="login-right">
-      <form class="login-form" @submit.prevent="login">
+      <div class="login-form">
         <h2>Welcome back</h2>
         <p class="form-sub">Sign in to your society portal</p>
 
         <!-- role selector -->
         <div class="field-label">I am a</div>
         <div class="role-grid">
-          <button type="button"
+          <button
             v-for="r in roles"
             :key="r.value"
             :class="['role-btn', { active: selectedRole === r.value }]"
@@ -87,8 +94,8 @@ function login() {
         </div>
 
         <!-- email -->
-        <label for="email">Email address</label>
-        <input id="email"
+        <label>Email address</label>
+        <input
           v-model="email"
           type="email"
           placeholder="you@society.com"
@@ -96,8 +103,8 @@ function login() {
         />
 
         <!-- password -->
-        <label for="password">Password</label>
-        <input id="password"
+        <label>Password</label>
+        <input
           v-model="password"
           type="password"
           placeholder="••••••••"
@@ -108,10 +115,15 @@ function login() {
         <p v-if="error" class="error-msg">{{ error }}</p>
 
         <!-- submit -->
-        <button type="submit" class="btn-primary" @click="login">
-          Sign in as {{ roles.find((r) => r.value === selectedRole)?.label }}
+        <button class="btn-primary" @click="login" :disabled="loading">
+          {{
+            loading
+              ? "Signing in..."
+              : "Sign in as " +
+                roles.find((r) => r.value === selectedRole)?.label
+          }}
         </button>
-    </form>
+      </div>
     </div>
   </div>
 </template>

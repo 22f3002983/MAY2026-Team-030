@@ -9,6 +9,8 @@ const auth = useAuthStore();
 const selectedRole = ref("resident");
 const email = ref("");
 const password = ref("");
+const inviteCode = ref("");
+const needsInviteCode = ref(false);
 const error = ref("");
 const loading = ref(false);
 
@@ -28,8 +30,14 @@ async function login() {
     return;
   }
 
+  if (needsInviteCode.value && !inviteCode.value) {
+    error.value = "Please enter your invite code";
+    loading.value = false;
+    return;
+  }
+
   try {
-    const user = await auth.login(email.value, password.value);
+    const user = await auth.login(email.value, password.value, inviteCode.value || null);
 
     if (user.role === "security") {
       router.push("/gate/dashboard");
@@ -37,8 +45,15 @@ async function login() {
       router.push("/dashboard");
     }
   } catch (err) {
-    if (err.response?.status === 401) {
+    const backendError = err.response?.data?.error;
+
+    if (backendError === "invite_code_required") {
+      needsInviteCode.value = true;
+      error.value = err.response.data.message;
+    } else if (err.response?.status === 401) {
       error.value = "Invalid email or password";
+    } else if (err.response?.status === 400) {
+      error.value = backendError || "Invalid invite code";
     } else {
       error.value = "Something went wrong. Please try again.";
     }
@@ -110,6 +125,18 @@ async function login() {
           placeholder="••••••••"
           class="n-input"
         />
+
+        <!-- invite code — only shown once the backend tells us it's needed -->
+        <template v-if="needsInviteCode">
+          <label>Invite code</label>
+          <input
+            v-model="inviteCode"
+            type="text"
+            placeholder="e.g. NW-7XQ2A"
+            class="n-input"
+            style="text-transform: uppercase"
+          />
+        </template>
 
         <!-- error message -->
         <p v-if="error" class="error-msg">{{ error }}</p>

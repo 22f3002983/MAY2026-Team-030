@@ -11,8 +11,11 @@ export const useAuthStore = defineStore('auth', () => {
   const name = computed(() => user.value?.name || '')
   const flatNumber = computed(() => user.value?.flat_number || '')
 
-  async function login(email, password) {
-    const response = await api.post('/auth/login', { email, password })
+  async function login(email, password, inviteCode = null) {
+    const payload = { email, password }
+    if (inviteCode) payload.invite_code = inviteCode
+
+    const response = await api.post('/auth/login', payload)
     user.value = response.data.user
     localStorage.setItem('niwaas_user', JSON.stringify(response.data.user))
     return response.data.user

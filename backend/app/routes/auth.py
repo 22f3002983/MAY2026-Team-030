@@ -183,6 +183,14 @@ def login():
     """
     Login with email and password.
     Body: { email, password }
+
+    A resident's FIRST login also requires their invite code (given to them
+    by the secretary), to prove they're the person the secretary intended
+    to invite — not just anyone who obtained the temp password.
+    Body (resident's first login only): { email, password, invite_code }
+
+    Once verified, the resident is flipped to onboarded and never needs
+    the invite code again on subsequent logins.
     """
     data = request.get_json()
 
@@ -202,6 +210,30 @@ def login():
 
     if not user.is_active:
         return jsonify({'error': 'Account is deactivated'}), 403
+
+    # ── resident's first login requires the invite code ──────────────────
+    if user.role == 'resident' and user.resident and not user.resident.is_onboarded:
+        resident = user.resident
+        invite_code = data.get('invite_code', '').strip().upper()
+
+        if not invite_code:
+            return jsonify({
+                'error':   'invite_code_required',
+                'message': 'Enter the invite code your secretary gave you to complete first-time login',
+            }), 400
+
+        if not resident.invite_code or resident.invite_code != invite_code:
+            return jsonify({'error': 'Invalid invite code'}), 400
+
+        if not resident.invite_code_expiry or resident.invite_code_expiry < datetime.utcnow():
+            return jsonify({'error': 'Invite code has expired — ask your secretary for a new one'}), 400
+
+        resident.is_onboarded      = True
+        resident.onboarded_at      = datetime.utcnow()
+        resident.invite_code       = None
+        resident.invite_code_expiry = None
+        db.session.commit()
+    # ───────────────────────────────────────────────────────────────────
 
     login_user(user, remember=True)
 
@@ -237,8 +269,6 @@ def list_residents():
 
     result = []
     for r in residents:
-        # pending dues total for this resident, if the Dues model/relationship
-        # is present — kept defensive since Dues isn't guaranteed loaded here
         pending_due = 0
         try:
             pending_due = sum(
@@ -250,16 +280,16 @@ def list_residents():
             pending_due = None
 
         result.append({
-            'id':              r.id,
-            'name':            r.name,
-            'phone':           r.phone,
-            'occupant_type':   r.occupant_type,
-            'household_size':  r.household_size,
-            'is_onboarded':    r.is_onboarded,
-            'invite_code':     r.invite_code,
-            'flat_id':         r.flat_id,
-            'flat_number':     r.flat.flat_number if r.flat else None,   # ADDED
-            'pending_due':     pending_due,                               # ADDED
+            'id':             r.id,
+            'name':           r.name,
+            'phone':          r.phone,
+            'occupant_type':  r.occupant_type,
+            'household_size': r.household_size,
+            'is_onboarded':   r.is_onboarded,
+            'invite_code':    r.invite_code,
+            'flat_id':        r.flat_id,
+            'flat_number':    r.flat.flat_number if r.flat else None,
+            'pending_due':    pending_due,
         })
 
     return jsonify({
@@ -298,50 +328,6 @@ def create_invite():
     return jsonify({
         'invite_code':        resident.invite_code,
         'invite_code_expiry': resident.invite_code_expiry.isoformat(),
-    }), 200
-
-
-@auth_bp.route('/onboard', methods=['POST'])
-@login_required
-def onboard():
-    """
-    Resident redeems their invite code and sets a permanent password.
-    Body: { invite_code, new_password }
-    """
-    if current_user.role != 'resident' or not current_user.resident:
-        return jsonify({'error': 'Only residents can onboard'}), 403
-
-    resident = current_user.resident
-
-    if resident.is_onboarded:
-        return jsonify({'error': 'Account is already onboarded'}), 400
-
-    data = request.get_json() or {}
-    invite_code  = data.get('invite_code', '').strip().upper()
-    new_password = data.get('new_password', '')
-
-    if not invite_code or not new_password:
-        return jsonify({'error': 'invite_code and new_password are required'}), 400
-
-    if len(new_password) < 6:
-        return jsonify({'error': 'Password must be at least 6 characters'}), 400
-
-    if not resident.invite_code or resident.invite_code != invite_code:
-        return jsonify({'error': 'Invalid invite code'}), 400
-
-    if not resident.invite_code_expiry or resident.invite_code_expiry < datetime.utcnow():
-        return jsonify({'error': 'Invite code has expired — ask your secretary for a new one'}), 400
-
-    current_user.set_password(new_password)
-    resident.is_onboarded = True
-    resident.onboarded_at = datetime.utcnow()
-    resident.invite_code = None
-    resident.invite_code_expiry = None
-    db.session.commit()
-
-    return jsonify({
-        'message': 'Onboarding complete',
-        'user':    user_to_dict(current_user),
     }), 200
 
 

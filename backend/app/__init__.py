@@ -35,8 +35,8 @@ def create_app():
     flask_app.register_blueprint(notices_bp, url_prefix='/api/notices')
    
 
-    # from app.routes.dues import dues_bp
-    # flask_app.register_blueprint(dues_bp, url_prefix='/api/dues')
+    from app.routes.dues import dues_bp
+    flask_app.register_blueprint(dues_bp, url_prefix='/api/dues')
 
     from app.routes.emergency import emergency_bp
     flask_app.register_blueprint(emergency_bp, url_prefix='/api/emergency')
@@ -68,8 +68,8 @@ def create_app():
     # from app.routes.electricity_bills import electricity_bills_bp
     # flask_app.register_blueprint(electricity_bills_bp, url_prefix='/api/electricity-bills')
 
-    # from app.routes.funds import funds_bp
-    # flask_app.register_blueprint(funds_bp, url_prefix='/api/funds')
+    from app.routes.funds import funds_bp
+    flask_app.register_blueprint(funds_bp, url_prefix='/api/funds')
 
     from app.routes.flats import flats_bp
     flask_app.register_blueprint(flats_bp, url_prefix='/api/flats')

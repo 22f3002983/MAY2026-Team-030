@@ -1,33 +1,60 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useAuthStore } from '../../stores/auth'
+import api from '../../api/axios'
 
 const auth = useAuthStore()
 
-// mock data - replace with API call in Sprint 1
-// one row per (resident, month) — a resident can owe more than one month at once
-const dues = ref([
-  { id: 'due_2026_07', month: 'July 2026',     amount_due: 2500, amount_paid: 0,    due_date: '10 Jul 2026', paid_date: null,          receipt_url: null },
-  { id: 'due_2026_06', month: 'June 2026',     amount_due: 2500, amount_paid: 2500, due_date: '10 Jun 2026', paid_date: '7 Jun 2026',  receipt_url: '#' },
-  { id: 'due_2026_05', month: 'May 2026',      amount_due: 2500, amount_paid: 2500, due_date: '10 May 2026', paid_date: '5 May 2026',  receipt_url: '#' },
-  { id: 'due_2026_04', month: 'April 2026',    amount_due: 2500, amount_paid: 0,    due_date: '10 Apr 2026', paid_date: null,          receipt_url: null },
-  { id: 'due_2026_03', month: 'March 2026',    amount_due: 2500, amount_paid: 2500, due_date: '10 Mar 2026', paid_date: '9 Mar 2026',  receipt_url: '#' },
-  { id: 'due_2026_02', month: 'February 2026', amount_due: 2500, amount_paid: 2500, due_date: '10 Feb 2026', paid_date: '6 Feb 2026',  receipt_url: '#' },
-  { id: 'due_2026_01', month: 'January 2026',  amount_due: 2500, amount_paid: 2500, due_date: '10 Jan 2026', paid_date: '8 Jan 2026',  receipt_url: '#' },
-])
+const dues    = ref([])
+const loading = ref(true)
+const error   = ref('')
 
-// most recent row = the headline current month
-const currentDue = computed(() => dues.value[0])
+const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December']
 
-const isPaid = (due) => due.amount_paid >= due.amount_due
+function formatMonth(isoDate) {
+  const [y, m] = isoDate.split('-')
+  return `${MONTH_NAMES[parseInt(m, 10) - 1]} ${y}`
+}
+
+function formatDate(isoDate) {
+  if (!isoDate) return null
+  return new Date(isoDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+async function fetchDues() {
+  loading.value = true
+  error.value = ''
+  try {
+    const res = await api.get('/dues')
+    dues.value = res.data.dues.map(d => ({
+      id:          d.id,
+      month:       formatMonth(d.month),
+      amount_due:  Number(d.amount_due),
+      amount_paid: Number(d.amount_paid),
+      due_date:    formatDate(d.month),
+      paid_date:   formatDate(d.paid_date),
+      status:      d.status,
+      receipt_url: d.status === 'paid' ? d.id : null,
+    }))
+  } catch (err) {
+    error.value = err.response?.data?.error || 'Could not load dues'
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(fetchDues)
+
+const currentDue = computed(() => dues.value[0] || null)
+
+const isPaid = (due) => due.status === 'paid'
 function getStatus(due) { return isPaid(due) ? 'paid' : 'pending' }
 function statusLabel(due) { return isPaid(due) ? 'Paid' : 'Pending' }
 
-// every unpaid month EXCEPT the current one — current already has its own ribbon up top
 const outstandingDues = computed(() =>
-  dues.value
-    .filter(d => d.id !== currentDue.value.id && !isPaid(d))
-    .sort((a, b) => new Date(a.month) - new Date(b.month))
+  currentDue.value
+    ? dues.value.filter(d => d.id !== currentDue.value.id && !isPaid(d))
+    : []
 )
 
 const unpaidDues = computed(() => dues.value.filter(d => !isPaid(d)))
@@ -41,13 +68,12 @@ const totalPaid = computed(() =>
   dues.value.reduce((sum, d) => sum + d.amount_paid, 0)
 )
 
-// history table reads from this — kept separate from `dues` so the table's
-// data source can evolve independently of the dues-payment logic above
 const paymentHistory = computed(() => dues.value)
 
 const showPayModal = ref(false)
-const payTarget     = ref(null)   // a single due, or null = pay everything outstanding
+const payTarget     = ref(null)
 const paySuccess    = ref('')
+const paying        = ref(false)
 
 function openPayModal(due = null) {
   payTarget.value = due
@@ -55,23 +81,41 @@ function openPayModal(due = null) {
   showPayModal.value = true
 }
 
-function confirmPayment() {
+async function confirmPayment() {
   const targets = payTarget.value ? [payTarget.value] : unpaidDues.value
-  const todayLabel = new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+  paying.value = true
 
-  targets.forEach(d => {
-    // TODO Sprint 1: replace with real gateway call per due —
-    // await api.post(`/dues/${d.id}/pay`, { amount: d.amount_due })
-    d.amount_paid = d.amount_due
-    d.paid_date = todayLabel
-    d.receipt_url = '#'
-  })
+  try {
+    for (const d of targets) {
+      await api.patch(`/dues/${d.id}/pay`)
+    }
+    paySuccess.value = targets.length > 1
+      ? `${targets.length} months marked paid`
+      : `Payment recorded for ${targets[0].month}`
 
-  paySuccess.value = targets.length > 1
-    ? `${targets.length} months marked paid`
-    : `Payment recorded for ${targets[0].month}`
+    await fetchDues()
 
-  setTimeout(() => { showPayModal.value = false }, 1200)
+    setTimeout(() => { showPayModal.value = false }, 1200)
+  } catch (err) {
+    paySuccess.value = ''
+    error.value = err.response?.data?.error || 'Payment failed, try again'
+  } finally {
+    paying.value = false
+  }
+}
+
+async function downloadReceipt(dueId) {
+  try {
+    const res = await api.get(`/dues/${dueId}/receipt`, { responseType: 'blob' })
+    const url = window.URL.createObjectURL(new Blob([res.data]))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `receipt_${dueId}.pdf`
+    link.click()
+    window.URL.revokeObjectURL(url)
+  } catch (err) {
+    error.value = 'Could not download receipt'
+  }
 }
 </script>
 
@@ -85,118 +129,125 @@ function confirmPayment() {
       </div>
     </div>
 
-    <!-- ribbon 1: current month only -->
-    <div class="current-due-card">
-      <div class="due-card-left">
-        <span class="due-eyebrow">This month</span>
-        <span class="due-month">{{ currentDue.month }}</span>
-        <span class="due-amount">₹{{ (isPaid(currentDue) ? 0 : currentDue.amount_due).toLocaleString('en-IN') }}</span>
-        <span v-if="!isPaid(currentDue)" class="due-by">Due by {{ currentDue.due_date }}</span>
-      </div>
-      <div class="due-card-right">
-        <span :class="['due-status', getStatus(currentDue)]">{{ statusLabel(currentDue) }}</span>
-        <button v-if="!isPaid(currentDue)" class="pay-info-btn" @click="openPayModal(currentDue)">
-          Pay now
-        </button>
-      </div>
-    </div>
+    <p v-if="loading" class="page-sub">Loading dues…</p>
+    <p v-else-if="error" class="page-sub" style="color:#b91c1c;">{{ error }}</p>
+    <p v-else-if="!dues.length" class="page-sub">No dues found yet. Ask your secretary to generate this month's maintenance.</p>
 
-    <!-- ribbon 2: pay everything outstanding in one go -->
-    <div v-if="outstandingDues.length" class="pay-all-ribbon">
-      <div class="pay-all-text">
-        <span class="pay-all-headline">{{ unpaidCount }} months unpaid</span>
-        <span class="pay-all-sub">₹{{ totalOutstanding.toLocaleString('en-IN') }} total outstanding</span>
-      </div>
-      <button class="pay-all-btn" @click="openPayModal(null)">Pay all outstanding</button>
-    </div>
-
-    <!-- ribbon 3: months other than current that are still unpaid -->
-    <div v-if="outstandingDues.length" class="other-dues-card">
-      <div class="other-dues-title">Other unpaid months</div>
-      <div class="other-due-row" v-for="d in outstandingDues" :key="d.id">
-        <span class="other-due-month">{{ d.month }}</span>
-        <span class="other-due-amount">₹{{ d.amount_due.toLocaleString('en-IN') }}</span>
-        <button class="other-due-pay-btn" @click="openPayModal(d)">Pay</button>
-      </div>
-    </div>
-
-    <div class="summary-row">
-      <div class="summary-item">
-        <span class="summary-value">₹{{ totalPaid.toLocaleString('en-IN') }}</span>
-        <span class="summary-label">Total paid</span>
-      </div>
-      <div class="summary-item">
-        <span class="summary-value">{{ dues.filter(isPaid).length }}</span>
-        <span class="summary-label">Months paid</span>
-      </div>
-      <div class="summary-item">
-        <span class="summary-value">{{ unpaidCount }}</span>
-        <span class="summary-label">Months pending</span>
-      </div>
-    </div>
-
-    <div class="section-title">Payment History</div>
-
-    <div class="history-table-wrap">
-      <table class="history-table">
-        <thead>
-          <tr>
-            <th>Month</th>
-            <th>Amount Due</th>
-            <th>Amount Paid</th>
-            <th>Paid On</th>
-            <th>Status</th>
-            <th>Receipt</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="item in paymentHistory" :key="item.month">
-            <td class="month-cell">{{ item.month }}</td>
-            <td>₹{{ (isPaid(item) ? 0 : item.amount_due).toLocaleString('en-IN') }}</td>
-            <td>₹{{ item.amount_paid.toLocaleString('en-IN') }}</td>
-            <td class="date-cell">{{ item.paid_date || '—' }}</td>
-            <td>
-              <span :class="['history-badge', getStatus(item)]">
-                {{ statusLabel(item) }}
-              </span>
-            </td>
-            <td>
-              <a v-if="item.receipt_url" href="#" class="receipt-link">
-                Download
-              </a>
-              <span v-else class="no-receipt">—</span>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div v-if="showPayModal" class="modal-overlay" @click.self="showPayModal = false">
-      <div class="modal">
-        <div class="modal-header">
-          <h3>{{ payTarget ? `Pay ${payTarget.month}` : 'Pay all outstanding' }}</h3>
-          <button class="close-btn" @click="showPayModal = false">✕</button>
+    <template v-else>
+      <!-- ribbon 1: current month only -->
+      <div class="current-due-card">
+        <div class="due-card-left">
+          <span class="due-eyebrow">This month</span>
+          <span class="due-month">{{ currentDue.month }}</span>
+          <span class="due-amount">₹{{ (isPaid(currentDue) ? 0 : currentDue.amount_due).toLocaleString('en-IN') }}</span>
+          <span v-if="!isPaid(currentDue)" class="due-by">Due by {{ currentDue.due_date }}</span>
         </div>
-        <div class="modal-body">
-          <p class="modal-amount">
-            ₹{{ (payTarget ? payTarget.amount_due : totalOutstanding).toLocaleString('en-IN') }}
-          </p>
-          <p v-if="!payTarget" class="modal-sub">Covers {{ unpaidCount }} unpaid months</p>
+        <div class="due-card-right">
+          <span :class="['due-status', getStatus(currentDue)]">{{ statusLabel(currentDue) }}</span>
+          <button v-if="!isPaid(currentDue)" class="pay-info-btn" @click="openPayModal(currentDue)">
+            Pay now
+          </button>
+        </div>
+      </div>
 
-          <div v-if="!payTarget" class="modal-breakdown">
-            <div class="modal-breakdown-row" v-for="d in unpaidDues" :key="d.id">
-              <span class="modal-breakdown-month">{{ d.month }}</span>
-              <span class="modal-breakdown-amount">₹{{ d.amount_due.toLocaleString('en-IN') }}</span>
-            </div>
+      <!-- ribbon 2: pay everything outstanding in one go -->
+      <div v-if="outstandingDues.length" class="pay-all-ribbon">
+        <div class="pay-all-text">
+          <span class="pay-all-headline">{{ unpaidCount }} months unpaid</span>
+          <span class="pay-all-sub">₹{{ totalOutstanding.toLocaleString('en-IN') }} total outstanding</span>
+        </div>
+        <button class="pay-all-btn" @click="openPayModal(null)">Pay all outstanding</button>
+      </div>
+
+      <!-- ribbon 3: months other than current that are still unpaid -->
+      <div v-if="outstandingDues.length" class="other-dues-card">
+        <div class="other-dues-title">Other unpaid months</div>
+        <div class="other-due-row" v-for="d in outstandingDues" :key="d.id">
+          <span class="other-due-month">{{ d.month }}</span>
+          <span class="other-due-amount">₹{{ d.amount_due.toLocaleString('en-IN') }}</span>
+          <button class="other-due-pay-btn" @click="openPayModal(d)">Pay</button>
+        </div>
+      </div>
+
+      <div class="summary-row">
+        <div class="summary-item">
+          <span class="summary-value">₹{{ totalPaid.toLocaleString('en-IN') }}</span>
+          <span class="summary-label">Total paid</span>
+        </div>
+        <div class="summary-item">
+          <span class="summary-value">{{ dues.filter(isPaid).length }}</span>
+          <span class="summary-label">Months paid</span>
+        </div>
+        <div class="summary-item">
+          <span class="summary-value">{{ unpaidCount }}</span>
+          <span class="summary-label">Months pending</span>
+        </div>
+      </div>
+
+      <div class="section-title">Payment History</div>
+
+      <div class="history-table-wrap">
+        <table class="history-table">
+          <thead>
+            <tr>
+              <th>Month</th>
+              <th>Amount Due</th>
+              <th>Amount Paid</th>
+              <th>Paid On</th>
+              <th>Status</th>
+              <th>Receipt</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in paymentHistory" :key="item.id">
+              <td class="month-cell">{{ item.month }}</td>
+              <td>₹{{ (isPaid(item) ? 0 : item.amount_due).toLocaleString('en-IN') }}</td>
+              <td>₹{{ item.amount_paid.toLocaleString('en-IN') }}</td>
+              <td class="date-cell">{{ item.paid_date || '—' }}</td>
+              <td>
+                <span :class="['history-badge', getStatus(item)]">
+                  {{ statusLabel(item) }}
+                </span>
+              </td>
+              <td>
+                <a v-if="item.receipt_url" href="#" class="receipt-link" @click.prevent="downloadReceipt(item.receipt_url)">
+                  Download
+                </a>
+                <span v-else class="no-receipt">—</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div v-if="showPayModal" class="modal-overlay" @click.self="showPayModal = false">
+        <div class="modal">
+          <div class="modal-header">
+            <h3>{{ payTarget ? `Pay ${payTarget.month}` : 'Pay all outstanding' }}</h3>
+            <button class="close-btn" @click="showPayModal = false">✕</button>
           </div>
+          <div class="modal-body">
+            <p class="modal-amount">
+              ₹{{ (payTarget ? payTarget.amount_due : totalOutstanding).toLocaleString('en-IN') }}
+            </p>
+            <p v-if="!payTarget" class="modal-sub">Covers {{ unpaidCount }} unpaid months</p>
 
-          <p v-if="paySuccess" class="success-msg">✓ {{ paySuccess }}</p>
+            <div v-if="!payTarget" class="modal-breakdown">
+              <div class="modal-breakdown-row" v-for="d in unpaidDues" :key="d.id">
+                <span class="modal-breakdown-month">{{ d.month }}</span>
+                <span class="modal-breakdown-amount">₹{{ d.amount_due.toLocaleString('en-IN') }}</span>
+              </div>
+            </div>
 
-          <button class="submit-btn" @click="confirmPayment">Confirm payment</button>
-          <!-- TODO Sprint 1: replace with actual gateway redirect (UPI/card/netbanking) -->
+            <p v-if="paySuccess" class="success-msg">✓ {{ paySuccess }}</p>
+
+            <button class="submit-btn" :disabled="paying" @click="confirmPayment">
+              {{ paying ? 'Processing…' : 'Confirm payment' }}
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    </template>
 
   </div>
 </template>
@@ -208,7 +259,6 @@ function confirmPayment() {
 .page-header h2 { font-size: var(--font-size-3xl); font-weight: 800; letter-spacing: -0.4px; }
 .page-sub { font-size: var(--font-size-sm); color: var(--color-text-muted); margin-top: 4px; }
 
-/* ribbon 1 — current month, the one thing that matters most right now */
 .current-due-card {
   background: linear-gradient(135deg, var(--c-900) 0%, var(--c-800) 100%);
   border-radius: var(--radius-xl); padding: 26px 32px; display: flex; align-items: center;
@@ -226,7 +276,6 @@ function confirmPayment() {
 .pay-info-btn { padding: 9px 18px; border-radius: var(--radius-md); background: #fff; color: var(--c-900); font-size: var(--font-size-sm); font-weight: 700; }
 .pay-info-btn:hover { background: rgba(255,255,255,0.9); }
 
-/* ribbon 2 — one-tap settle everything, visually distinct (alert tone) so it reads as an action, not a status */
 .pay-all-ribbon {
   display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
   background: var(--color-warning-bg); border: 1px solid var(--color-warning);
@@ -238,7 +287,6 @@ function confirmPayment() {
 .pay-all-btn { flex-shrink: 0; height: 40px; padding: 0 20px; border-radius: var(--radius-md); background: var(--c-800); color: #fff; font-size: var(--font-size-sm); font-weight: 700; white-space: nowrap; }
 .pay-all-btn:hover { background: var(--c-900); }
 
-/* ribbon 3 — everything else unpaid, scannable list rather than repeated hero cards */
 .other-dues-card {
   background: var(--color-surface); border: 1px solid var(--color-border);
   border-radius: var(--radius-lg); padding: 6px 6px 10px; margin-bottom: 24px; box-shadow: var(--shadow-xs);
@@ -298,4 +346,5 @@ function confirmPayment() {
 .modal-breakdown-amount { color: var(--color-text-primary); font-weight: 700; }
 .success-msg { font-size: var(--font-size-xs); color: var(--color-success-text); font-weight: 600; margin: 10px 0; }
 .submit-btn { width: 100%; height: 44px; border-radius: var(--radius-md); background: var(--c-800); color: #fff; font-size: var(--font-size-md); font-weight: 700; margin-top: 16px; }
+.submit-btn:disabled { opacity: 0.6; }
 </style>

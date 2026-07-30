@@ -1,15 +1,13 @@
 <script setup>
-import { ref, computed } from 'vue'
-
-/* ---------------------------------------------------------------
-   Document Requests — Secretary view.
-   Frontend-only mock; replace with API calls when the backend is ready.
---------------------------------------------------------------- */
+import { ref, computed, onMounted } from 'vue'
+import api from '../../api/axios'
 
 const activeTab     = ref('all')
 const selectedFiles = ref({})
 const uploading     = ref({})
 const rowError      = ref({})
+const loading       = ref(true)
+const loadError     = ref('')
 
 const tabs = [
   { value: 'all',       label: 'All' },
@@ -18,12 +16,22 @@ const tabs = [
   { value: 'delivered', label: 'Delivered' },
 ]
 
-// Mock data for sec doc view
-const requests = ref([
-  { id: 1, resident: 'Ravi Kumar',   flat: 'A-402', type: 'NOC',             reason: 'Bank loan application', status: 'ready',     requested_at: '10 Jul 2026' },
-  { id: 2, resident: 'Jatin Kumar',  flat: 'B-201', type: 'Payment Receipt', reason: 'Tax filing',            status: 'requested', requested_at: '15 Jul 2026' },
-  { id: 3, resident: 'Meena Sharma', flat: 'B-301', type: 'Other',           reason: 'Society membership',    status: 'delivered', requested_at: '5 Jul 2026'  },
-])
+const requests = ref([])
+
+async function loadRequests() {
+  loading.value = true
+  loadError.value = ''
+  try {
+    const res = await api.get('/document-requests')
+    requests.value = res.data.requests
+  } catch (err) {
+    loadError.value = err.response?.data?.error || 'Failed to load requests'
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(loadRequests)
 
 const filtered = computed(() => {
   if (activeTab.value === 'all') return requests.value
@@ -38,7 +46,16 @@ function onFileSelected(r, event) {
   rowError.value[r.id] = ''
 }
 
-function markReady(r) {
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload  = () => resolve(reader.result.split(',')[1]) // strip the data: prefix
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
+async function markReady(r) {
   rowError.value[r.id] = ''
   const file = selectedFiles.value[r.id]
 
@@ -48,22 +65,39 @@ function markReady(r) {
   }
 
   uploading.value[r.id] = true
-  // mock "upload" — just simulate a short delay and flip status locally
-  setTimeout(() => {
-    r.status = 'ready'
-    r.file_name = file.name
+  try {
+    const base64 = await fileToBase64(file)
+    const res = await api.patch(`/document-requests/${r.id}/upload`, {
+      filename: file.name,
+      file_data: base64,
+    })
+    Object.assign(r, res.data.request)
     delete selectedFiles.value[r.id]
+  } catch (err) {
+    rowError.value[r.id] = err.response?.data?.error || 'Upload failed'
+  } finally {
     uploading.value[r.id] = false
-  }, 500)
+  }
 }
 
-function markDelivered(r) {
-  r.status = 'delivered'
+async function markDelivered(r) {
+  rowError.value[r.id] = ''
+  try {
+    const res = await api.patch(`/document-requests/${r.id}/deliver`)
+    Object.assign(r, res.data.request)
+  } catch (err) {
+    rowError.value[r.id] = err.response?.data?.error || 'Failed to mark delivered'
+  }
 }
 
 function statusLabel(status) {
   const map = { requested: 'Requested', in_progress: 'In Progress', ready: 'Ready', delivered: 'Delivered' }
   return map[status] || status
+}
+
+function formatDate(iso) {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
 }
 </script>
 
@@ -89,7 +123,11 @@ function statusLabel(status) {
       </button>
     </div>
 
-    <div class="table-wrap">
+    <p v-if="loadError" class="row-error">{{ loadError }}</p>
+
+    <div v-if="loading" class="empty-row"><p>Loading...</p></div>
+
+    <div v-else class="table-wrap">
       <table class="requests-table">
         <thead>
           <tr>
@@ -104,12 +142,12 @@ function statusLabel(status) {
         <tbody>
           <tr v-for="r in filtered" :key="r.id">
             <td class="resident-cell">
-              {{ r.resident }}
-              <span class="flat-tag">{{ r.flat }}</span>
+              {{ r.resident_name }}
+              <span class="flat-tag">{{ r.flat_number || '—' }}</span>
             </td>
             <td>{{ r.type }}</td>
             <td class="reason-cell">{{ r.reason || '—' }}</td>
-            <td class="date-cell">{{ r.requested_at }}</td>
+            <td class="date-cell">{{ formatDate(r.requested_at) }}</td>
             <td>
               <span :class="['status-chip', 'status-' + r.status]">{{ statusLabel(r.status) }}</span>
             </td>
@@ -133,7 +171,7 @@ function statusLabel(status) {
             </td>
           </tr>
 
-          <tr v-if="filtered.length === 0">
+          <tr v-if="filtered.length === 0 && !loading">
             <td colspan="6" class="empty-row">No document requests</td>
           </tr>
         </tbody>

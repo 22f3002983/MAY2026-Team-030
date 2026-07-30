@@ -1,14 +1,22 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import api from '../../api/axios'
 
 const searchQuery = ref('')
 const showAddModal = ref(false)
 const selectedResident = ref(null)
 const showDetailModal = ref(false)
+const loading = ref(true)
+const submitting = ref(false)
 
 const newResident = ref({
   name: '',
-  flat: '',
+  email: '',
+  password: '',
+  tower: '',
+  floor: null,
+  unit_number: '',
+  flat_number: '',
   phone: '',
   members: 1,
   occupant_type: 'owner',
@@ -16,23 +24,29 @@ const newResident = ref({
 
 const formError = ref('')
 
-// mock data - replace with API in Sprint 1
-const residents = ref([
-  { id: 1, name: 'Ravi Kumar',   flat: 'A-402', phone: '+91 98480 11223', members: 4, dues: '₹2,500',  dues_status: 'pending', occupant_type: 'owner',  is_onboarded: true  },
-  { id: 2, name: 'Priya Menon',  flat: 'B-201', phone: '+91 97400 33441', members: 2, dues: 'Paid',     dues_status: 'paid',    occupant_type: 'tenant', is_onboarded: true  },
-  { id: 3, name: 'Arjun Nair',   flat: 'C-105', phone: '+91 96300 22110', members: 3, dues: '₹2,500',  dues_status: 'pending', occupant_type: 'owner',  is_onboarded: true  },
-  { id: 4, name: 'Sana Iqbal',   flat: 'A-108', phone: '+91 95200 44332', members: 2, dues: 'Paid',     dues_status: 'paid',    occupant_type: 'tenant', is_onboarded: true  },
-  { id: 5, name: 'Meena Sharma', flat: 'B-301', phone: '+91 94100 55443', members: 5, dues: '₹5,000',  dues_status: 'overdue', occupant_type: 'owner',  is_onboarded: true  },
-  { id: 6, name: 'Flat D-201',   flat: 'D-201', phone: '—',               members: 0, dues: '—',        dues_status: 'pending', occupant_type: 'owner',  is_onboarded: false },
-])
+const residents = ref([])
+
+async function fetchResidents() {
+  loading.value = true
+  try {
+    const res = await api.get('/auth/residents')
+    residents.value = res.data.residents
+  } catch (err) {
+    console.error('Failed to load residents', err)
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(fetchResidents)
 
 const filtered = computed(() => {
   if (!searchQuery.value) return residents.value
   const q = searchQuery.value.toLowerCase()
   return residents.value.filter(r =>
-    r.name.toLowerCase().includes(q) ||
-    r.flat.toLowerCase().includes(q) ||
-    r.phone.includes(q)
+    (r.name || '').toLowerCase().includes(q) ||
+    (r.flat_number || '').toLowerCase().includes(q) ||
+    (r.phone || '').includes(q)
   )
 })
 
@@ -44,37 +58,95 @@ function openDetail(resident) {
   showDetailModal.value  = true
 }
 
-function addResident() {
+async function addResident() {
   formError.value = ''
 
-  if (!newResident.value.name || !newResident.value.flat || !newResident.value.phone) {
-    formError.value = 'Name, flat and phone are required'
+  if (!newResident.value.name || !newResident.value.email || !newResident.value.password ||
+      !newResident.value.flat_number || !newResident.value.phone) {
+    formError.value = 'Name, email, password, flat number and phone are required'
+    return
+  }
+  if (newResident.value.password.length < 6) {
+    formError.value = 'Password must be at least 6 characters'
+    return
+  }
+  if (!newResident.value.tower || newResident.value.floor === null || !newResident.value.unit_number) {
+    formError.value = 'Tower, floor and unit number are required to register a new flat'
     return
   }
 
-  const inviteCode = 'NW-' + Math.random().toString(36).substring(2, 7).toUpperCase()
+  submitting.value = true
+  try {
+    const res = await api.post('/auth/register', {
+      email:          newResident.value.email.trim().toLowerCase(),
+      password:       newResident.value.password,
+      role:           'resident',
+      name:           newResident.value.name,
+      phone:          newResident.value.phone,
+      tower:          newResident.value.tower,
+      floor:          newResident.value.floor,
+      unit_number:    newResident.value.unit_number,
+      flat_number:    newResident.value.flat_number,
+      occupant_type:  newResident.value.occupant_type,
+      household_size: newResident.value.members,
+    })
 
-  residents.value.push({
-    id:            residents.value.length + 1,
-    name:          newResident.value.name,
-    flat:          newResident.value.flat,
-    phone:         newResident.value.phone,
-    members:       newResident.value.members,
-    dues:          '—',
-    dues_status:   'pending',
-    occupant_type: newResident.value.occupant_type,
-    is_onboarded:  false,
-    invite_code:   inviteCode,
-  })
+    await fetchResidents()
 
-  newResident.value = { name: '', flat: '', phone: '', members: 1, occupant_type: 'owner' }
-  showAddModal.value = false
+    newResident.value = { name: '', email: '', password: '', tower: '', floor: null, unit_number: '', flat_number: '', phone: '', members: 1, occupant_type: 'owner' }
+    showAddModal.value = false
+
+    alert('Resident added. They can log in with the email/password you set, and change their password afterward.')
+  } catch (err) {
+    formError.value = err.response?.data?.error || 'Failed to add resident'
+  } finally {
+    submitting.value = false
+  }
+  // ADDED
+const regenerating = ref(false)
+const regenerateError = ref('')
+
+async function regenerateInvite(resident) {
+  regenerateError.value = ''
+  regenerating.value = true
+  try {
+    const res = await api.post('/auth/invite', { resident_id: resident.id })
+    // update the currently-open resident + the row in the list so both reflect the new code
+    if (selectedResident.value && selectedResident.value.id === resident.id) {
+      selectedResident.value = { ...selectedResident.value, invite_code: res.data.invite_code }
+    }
+    const idx = residents.value.findIndex(r => r.id === resident.id)
+    if (idx !== -1) {
+      residents.value[idx] = { ...residents.value[idx], invite_code: res.data.invite_code }
+    }
+  } catch (err) {
+    regenerateError.value = err.response?.data?.error || 'Failed to regenerate invite code'
+  } finally {
+    regenerating.value = false
+  }
+}
+
+
+
 }
 
 function duesClass(status) {
   if (status === 'paid')    return 'dues-paid'
   if (status === 'overdue') return 'dues-overdue'
   return 'dues-pending'
+}
+
+// ADDED — derive a display status from pending_due since the backend
+// doesn't return a separate dues_status field
+function duesDisplay(resident) {
+  if (resident.pending_due === null || resident.pending_due === undefined) return '—'
+  if (resident.pending_due <= 0) return 'Paid'
+  return `₹${resident.pending_due.toLocaleString('en-IN')}`
+}
+function duesStatusOf(resident) {
+  if (resident.pending_due === null || resident.pending_due === undefined) return 'pending'
+  if (resident.pending_due <= 0) return 'paid'
+  return 'pending'
 }
 </script>
 
@@ -111,6 +183,9 @@ function duesClass(status) {
           </tr>
         </thead>
         <tbody>
+          <tr v-if="loading">
+            <td colspan="7" class="empty-row">Loading...</td>
+          </tr>
           <tr
             v-for="r in filtered"
             :key="r.id"
@@ -125,12 +200,12 @@ function duesClass(status) {
                 <span class="resident-name">{{ r.name }}</span>
               </div>
             </td>
-            <td class="flat-cell">{{ r.flat }}</td>
+            <td class="flat-cell">{{ r.flat_number || '—' }}</td>
             <td class="phone-cell">{{ r.phone }}</td>
-            <td class="members-cell">{{ r.members || '—' }}</td>
+            <td class="members-cell">{{ r.household_size || '—' }}</td>
             <td>
-              <span :class="['dues-badge', duesClass(r.dues_status)]">
-                {{ r.dues }}
+              <span :class="['dues-badge', duesClass(duesStatusOf(r))]">
+                {{ duesDisplay(r) }}
               </span>
             </td>
             <td>
@@ -143,7 +218,7 @@ function duesClass(status) {
             </td>
           </tr>
 
-          <tr v-if="filtered.length === 0">
+          <tr v-if="!loading && filtered.length === 0">
             <td colspan="7" class="empty-row">No residents found</td>
           </tr>
         </tbody>
@@ -156,7 +231,7 @@ function duesClass(status) {
         <div class="modal-header">
           <div>
             <h3>{{ selectedResident?.name }}</h3>
-            <span class="modal-sub">{{ selectedResident?.flat }} · {{ selectedResident?.occupant_type }}</span>
+            <span class="modal-sub">{{ selectedResident?.flat_number }} · {{ selectedResident?.occupant_type }}</span>
           </div>
           <button class="close-btn" @click="showDetailModal = false">✕</button>
         </div>
@@ -169,11 +244,11 @@ function duesClass(status) {
             </div>
             <div class="detail-row">
               <span class="d-label">Flat</span>
-              <span class="d-value">{{ selectedResident?.flat }}</span>
+              <span class="d-value">{{ selectedResident?.flat_number || '—' }}</span>
             </div>
             <div class="detail-row">
               <span class="d-label">Members</span>
-              <span class="d-value">{{ selectedResident?.members || '—' }}</span>
+              <span class="d-value">{{ selectedResident?.household_size || '—' }}</span>
             </div>
             <div class="detail-row">
               <span class="d-label">Type</span>
@@ -181,8 +256,8 @@ function duesClass(status) {
             </div>
             <div class="detail-row">
               <span class="d-label">Dues</span>
-              <span :class="['d-value', duesClass(selectedResident?.dues_status)]">
-                {{ selectedResident?.dues }}
+              <span :class="['d-value', duesClass(duesStatusOf(selectedResident || {}))]">
+                {{ selectedResident ? duesDisplay(selectedResident) : '—' }}
               </span>
             </div>
             <div class="detail-row">
@@ -195,6 +270,14 @@ function duesClass(status) {
               <span class="d-label">Invite code</span>
               <span class="d-value invite-code">{{ selectedResident?.invite_code }}</span>
             </div>
+            <div v-if="selectedResident && !selectedResident.is_onboarded" class="detail-row">
+              <span class="d-label"></span>
+              <button class="btn-secondary" style="flex: none; height: 34px; padding: 0 14px;" :disabled="regenerating" @click="regenerateInvite(selectedResident)">
+                {{ regenerating ? 'Regenerating...' : 'Regenerate invite code' }}
+              </button>
+            </div>
+            <p v-if="regenerateError" class="error-msg">{{ regenerateError }}</p>
+
           </div>
         </div>
 
@@ -216,8 +299,32 @@ function duesClass(status) {
           <label>Name *</label>
           <input v-model="newResident.name" type="text" placeholder="Full name" class="n-input" />
 
-          <label>Flat *</label>
-          <input v-model="newResident.flat" type="text" placeholder="e.g. A-402" class="n-input" />
+          <label>Email *</label>
+          <input v-model="newResident.email" type="email" placeholder="resident@example.com" class="n-input" />
+
+          <label>Password *</label>
+          <input v-model="newResident.password" type="text" placeholder="Starting password (min 6 chars)" class="n-input" />
+
+          <div class="two-col">
+            <div>
+              <label>Tower *</label>
+              <input v-model="newResident.tower" type="text" placeholder="e.g. A" class="n-input" />
+            </div>
+            <div>
+              <label>Floor *</label>
+              <input v-model.number="newResident.floor" type="number" min="0" class="n-input" />
+            </div>
+          </div>
+          <div class="two-col">
+            <div>
+              <label>Unit number *</label>
+              <input v-model="newResident.unit_number" type="text" placeholder="e.g. 402" class="n-input" />
+            </div>
+            <div>
+              <label>Flat number *</label>
+              <input v-model="newResident.flat_number" type="text" placeholder="e.g. A-402" class="n-input" />
+            </div>
+          </div>
 
           <label>Phone *</label>
           <input v-model="newResident.phone" type="text" placeholder="+91 98XXX XXXXX" class="n-input" />
@@ -239,13 +346,15 @@ function duesClass(status) {
           <p v-if="formError" class="error-msg">{{ formError }}</p>
 
           <div class="invite-note">
-            An invite code will be generated automatically and shown in the resident's profile after saving.
+            The resident can log in immediately with the email and password you set here, and change their password later from their account settings.
           </div>
         </div>
 
         <div class="modal-footer">
           <button class="btn-secondary" @click="showAddModal = false">Cancel</button>
-          <button class="btn-primary" @click="addResident">Add & Generate Invite</button>
+          <button class="btn-primary" :disabled="submitting" @click="addResident">
+            {{ submitting ? 'Adding...' : 'Add Resident' }}
+          </button>
         </div>
       </div>
     </div>
@@ -586,6 +695,7 @@ label {
 }
 
 .btn-primary:hover { background: var(--c-900); }
+.btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .btn-secondary {
   flex: 1;

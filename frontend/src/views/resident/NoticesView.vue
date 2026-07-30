@@ -1,8 +1,12 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
+import api from '../../api/axios' // adjust path if this file lives elsewhere
 
 const searchQuery = ref('')
-const filterTag = ref('all')
+const filterTag   = ref('all')
+const notices     = ref([])
+const loading     = ref(true)
+const loadError   = ref('')
 
 const tags = ['all', 'General', 'Maintenance', 'Security', 'Event', 'Urgent']
 
@@ -14,58 +18,46 @@ const tagColors = {
   Urgent:      { accent: '#C43D3D', tagBg: '#FBE9E4' },
 }
 
-// mock data - replace with API call in Sprint 1
-const notices = ref([
-  {
-    id: 1,
-    title: 'Water supply disruption on 5 July',
-    body: 'Due to pipeline maintenance, water supply will be suspended from 10 AM to 4 PM on 5 July 2026. Please store water accordingly.',
-    tag: 'Maintenance',
-    relevance: 'all',
-    date: '2 Jul',
-    expiry_date: '6 Jul 2026',
-  },
-  {
-    id: 2,
-    title: 'New visitor gate-pass protocol',
-    body: 'From 1 July, every visitor must carry a gate pass code. Please pre-register guests through the app before their arrival.',
-    tag: 'Security',
-    relevance: 'all',
-    date: '26 Jun',
-    expiry_date: '31 Jul 2026',
-  },
-  {
-    id: 3,
-    title: 'Society AGM scheduled for 15 July',
-    body: 'The Annual General Meeting will be held in the Community Hall at 6 PM on 15 July 2026. Attendance is requested from all flat owners.',
-    tag: 'Event',
-    relevance: 'all',
-    date: '20 Jun',
-    expiry_date: '15 Jul 2026',
-  },
-  {
-    id: 4,
-    title: 'Gym temporarily closed',
-    body: 'The gymnasium is closed for equipment maintenance until 10 July 2026. We regret the inconvenience.',
-    tag: 'General',
-    relevance: 'all',
-    date: '18 Jun',
-    expiry_date: '10 Jul 2026',
-  },
-])
+async function fetchNotices() {
+  loading.value   = true
+  loadError.value = ''
+  try {
+    const params = {}
+    if (filterTag.value !== 'all') params.tag = filterTag.value
+    const res = await api.get('/notices', { params })
+    notices.value = res.data.notices
+  } catch (err) {
+    loadError.value = err.response?.data?.error || 'Failed to load notices'
+    console.error('Failed to load notices', err)
+  } finally {
+    loading.value = false
+  }
+}
 
+onMounted(fetchNotices)
+
+// re-fetch from the server when the tag filter changes, rather than
+// filtering client-side — keeps behavior consistent with the backend's
+// own relevance-based filtering (e.g. residents only seeing their tower)
+watch(filterTag, fetchNotices)
+
+// search stays client-side since it's just narrowing what's already loaded
 const filteredNotices = computed(() => {
-  return notices.value.filter(n => {
-    const matchesSearch = !searchQuery.value
-      || n.title.toLowerCase().includes(searchQuery.value.toLowerCase())
-      || n.body.toLowerCase().includes(searchQuery.value.toLowerCase())
-    const matchesTag = filterTag.value === 'all' || n.tag === filterTag.value
-    return matchesSearch && matchesTag
-  })
+  if (!searchQuery.value) return notices.value
+  const q = searchQuery.value.toLowerCase()
+  return notices.value.filter(n =>
+    n.title.toLowerCase().includes(q) ||
+    n.description.toLowerCase().includes(q)
+  )
 })
 
 function tagStyle(tag) {
   return tagColors[tag] || tagColors['General']
+}
+
+function formatDate(iso) {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 </script>
 
@@ -99,42 +91,50 @@ function tagStyle(tag) {
       </div>
     </div>
 
+    <p v-if="loadError" class="error-msg">{{ loadError }}</p>
+
     <!-- notices list -->
     <div class="notices-list">
-      <div
-        v-for="notice in filteredNotices"
-        :key="notice.id"
-        class="notice-card"
-      >
-        <div
-          class="notice-accent"
-          :style="{ background: tagStyle(notice.tag).accent }"
-        ></div>
+      <div v-if="loading" class="empty-state">
+        <p>Loading notices...</p>
+      </div>
 
-        <div class="notice-body">
-          <div class="notice-meta">
-            <span
-              class="notice-tag"
-              :style="{
-                color: tagStyle(notice.tag).accent,
-                background: tagStyle(notice.tag).tagBg
-              }"
-            >
-              {{ notice.tag }}
-            </span>
-            <span class="notice-date">{{ notice.date }}, 2026</span>
-            <span class="notice-expiry">Expires {{ notice.expiry_date }}</span>
+      <template v-else>
+        <div
+          v-for="notice in filteredNotices"
+          :key="notice.id"
+          class="notice-card"
+        >
+          <div
+            class="notice-accent"
+            :style="{ background: tagStyle(notice.tag).accent }"
+          ></div>
+
+          <div class="notice-body">
+            <div class="notice-meta">
+              <span
+                class="notice-tag"
+                :style="{
+                  color: tagStyle(notice.tag).accent,
+                  background: tagStyle(notice.tag).tagBg
+                }"
+              >
+                {{ notice.tag }}
+              </span>
+              <span class="notice-date">{{ formatDate(notice.created_at) }}</span>
+              <span class="notice-expiry">Expires {{ formatDate(notice.expiry_date) }}</span>
+            </div>
+            <h3 class="notice-title">{{ notice.title }}</h3>
+            <p class="notice-text">{{ notice.description }}</p>
           </div>
-          <h3 class="notice-title">{{ notice.title }}</h3>
-          <p class="notice-text">{{ notice.body }}</p>
+
         </div>
 
-      </div>
-
-      <div v-if="filteredNotices.length === 0" class="empty-state">
-        <p>No notices found</p>
-        <span>Try a different search or tag filter</span>
-      </div>
+        <div v-if="filteredNotices.length === 0" class="empty-state">
+          <p>No notices found</p>
+          <span>Try a different search or tag filter</span>
+        </div>
+      </template>
     </div>
 
   </div>
@@ -209,6 +209,12 @@ function tagStyle(tag) {
   background: var(--c-800);
   border-color: var(--c-800);
   color: #fff;
+}
+
+.error-msg {
+  font-size: var(--font-size-sm);
+  color: var(--color-danger);
+  margin-bottom: 14px;
 }
 
 .notices-list {

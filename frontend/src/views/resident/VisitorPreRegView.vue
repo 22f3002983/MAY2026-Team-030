@@ -1,43 +1,31 @@
 <script setup>
-import { ref, computed } from 'vue'
-import { useAuthStore } from '../../stores/auth'
+import { ref, computed, onMounted } from 'vue'
+import api from '../../api/axios'
 
-const auth = useAuthStore()
-const API = 'http://127.0.0.1:5000/api'
-
-async function loadVisitors() {
-  const res = await fetch(`${API}/visitors`, { credentials: 'include' })
-  const data = await res.json()
-  // keep using your existing local 'visitors' ref, just refresh it from real data
-  return data.visitors || []
-}
-
-const mode        = ref('Pre-register')
-const visitorName = ref('')
-const phone       = ref('')
+const mode         = ref('Pre-register')
+const visitorName  = ref('')
+const phone        = ref('')
 const expectedDate = ref('')
 const expectedTime = ref('')
-const purpose     = ref('')
-const formError   = ref('')
-const successMsg  = ref('')
+const reason       = ref('')
+const formError    = ref('')
+const successMsg   = ref('')
+const loading      = ref(false)
+
+const visitors        = ref([])
+const visitorsLoading  = ref(true)
 
 const modes = ['Pre-register', 'Walk-in']
 
+// NOTE: the backend's POST /visitors route only accepts
+// name / phone / expected_date / expected_time / reason / vehicle_number.
+// There's no separate "walk-in" creation route, and the Visitor model has
+// no expiry/duration field at all. So both modes hit the same endpoint —
+// "Walk-in" just skips the date/time fields. If you want walk-ins to
+// auto-expire, that needs a real column + logic on the backend; the
+// duration buttons below are UI-only for now and aren't sent anywhere.
 const walkinDurationOptions = [15, 30, 45, 60]
 const walkinDuration = ref(15)
-
-const preregDurationOptions = [
-  { value: 'day_of', label: 'Expected day only' },
-  { value: 7,   label: '1 week' },
-  { value: 14,  label: '2 weeks' },
-  { value: 30,  label: '1 month' },
-  { value: 90,  label: '3 months' },
-  { value: 'custom', label: 'Custom date' },
-]
-const preregDuration = ref('day_of')
-const customExpiryDate = ref('')
-
-const editingId = ref(null)
 
 const showHistory  = ref(false)
 const historyQuery = ref('')
@@ -46,9 +34,6 @@ const historyDate  = ref('')
 const showRegenerate  = ref(false)
 const regenerateQuery = ref('')
 
-// CHANGED: added an 'active' tab covering every pass that's still usable
-// (expected, checked in, or checked-out-but-valid), separate from the
-// narrower Upcoming/Checked In views.
 const listTab = ref('upcoming')
 const listTabs = [
   { value: 'upcoming',    label: 'Upcoming' },
@@ -56,130 +41,125 @@ const listTabs = [
   { value: 'active',      label: 'Active Passes' },
 ]
 
-let nextId = 7
-function generateId() { return nextId++ }
+onMounted(async () => {
+  await fetchVisitors()
+})
 
-// mock data - replace with API in Sprint 1
-const visitors = ref([
-  {
-    id: 1, name: 'Rahul Verma', phone: '98••• 210', date: '1 Jul', time: '5:30 PM', flat: 'A-402',
-    code: 'GATE-7712', status: 'expected', purpose: 'Guest', pass_type: 'pre_register',
-    created_at: '2026-07-01T17:30:00', expiry_at: '2026-10-01T23:59:59',
-    revoked: false, revoked_at: null, visit_log: [],
-  },
-  {
-    id: 2, name: 'Swiggy Delivery', phone: '—', date: '1 Jul', time: '1:10 PM', flat: 'A-402',
-    code: 'GATE-5521', status: 'checked_out', purpose: 'Food delivery', pass_type: 'walk_in',
-    created_at: '2026-07-01T13:10:00', expiry_at: '2026-07-01T13:40:00',
-    revoked: false, revoked_at: null,
-    visit_log: [{ checked_in_at: '2026-07-01T13:12:00', checked_out_at: '2026-07-01T13:20:00' }],
-  },
-  {
-    id: 3, name: 'Dr. Nair', phone: '99••• 004', date: '2 Jul', time: '11:00 AM', flat: 'A-402',
-    code: 'GATE-8890', status: 'checked_out', purpose: 'Doctor visit', pass_type: 'pre_register',
-    created_at: '2026-07-02T10:45:00', expiry_at: '2026-08-02T11:00:00',
-    revoked: false, revoked_at: null,
-    visit_log: [
-      { checked_in_at: '2026-07-02T11:03:00', checked_out_at: '2026-07-02T11:40:00' },
-      { checked_in_at: '2026-07-05T10:58:00', checked_out_at: '2026-07-05T11:20:00' },
-    ],
-  },
-  {
-    id: 4, name: 'Priya (sister)', phone: '90123 44556', date: '5 Jul', time: '10:00 AM', flat: 'A-402',
-    code: 'GATE-2201', status: 'expected', purpose: 'Guest', pass_type: 'pre_register',
-    created_at: '2026-07-04T09:00:00', expiry_at: '2026-10-05T23:59:00',
-    revoked: true, revoked_at: '2026-07-06T09:00:00', visit_log: [],
-  },
-  {
-    id: 5, name: 'Amit (cousin)', phone: '90554 33119', date: '3 Jul', time: '7:00 PM', flat: 'A-402',
-    code: 'GATE-5520', status: 'expected', purpose: 'Guest', pass_type: 'pre_register',
-    created_at: '2026-07-03T18:00:00', expiry_at: '2026-07-03T23:59:00', // no-show, never checked in
-    revoked: false, revoked_at: null, visit_log: [],
-  },
-  {
-    id: 6, name: 'Neha (cousin)', phone: '91234 56789', date: '16 Jul', time: '11:00 AM', flat: 'A-402',
-    code: 'GATE-4477', status: 'expected', purpose: 'Guest', pass_type: 'pre_register',
-    created_at: '2026-07-11T09:30:00', valid_from: '2026-07-16T00:00:00', expiry_at: '2026-07-16T23:59:59',
-    revoked: false, revoked_at: null, visit_log: [],
-  },
-])
-
-const securityAlerts = ref([
-  {
-    id: 1, type: 'unexpected', visitor_name: 'Unknown visitor', flat: 'A-402', time: '2:15 PM',
-    note: 'At the gate without a pass, says they\'re here to see A-402.',
-  },
-])
-
-function addMinutes(mins) { const d = new Date(); d.setMinutes(d.getMinutes() + mins); return d }
-function addDays(days) { const d = new Date(); d.setDate(d.getDate() + days); return d }
-function generateCode() { return 'GATE-' + (4000 + Math.floor(Math.random() * 900)) }
-
-// passStatus = is the CODE itself usable right now? Internal only — drives
-// Edit/Revoke/regenerate eligibility. Never rendered as its own badge.
-function passStatus(v) {
-  if (v.revoked) return 'revoked'
-  if (v.valid_from && new Date() < new Date(v.valid_from)) return 'valid' // not open yet, but not broken
-  if (new Date() > new Date(v.expiry_at)) return 'expired'
-  return 'valid'
+async function fetchVisitors() {
+  visitorsLoading.value = true
+  try {
+    const response = await api.get('/visitors')
+    visitors.value = response.data.visitors || []
+  } catch (err) {
+    console.error('Failed to load visitors', err)
+  } finally {
+    visitorsLoading.value = false
+  }
 }
 
-// FIX: single source of truth for what a resident actually SEES on a card.
-// Layers revoked/expired on top of the raw workflow status, so there is
-// exactly one badge, never two that can disagree.
+// ── status helpers, built only from real fields ──────────────
+
+const STATUS_LABELS = {
+  pre_registered: 'Expected',
+  checked_in:     'Checked In',
+  checked_out:    'Checked Out',
+  rejected:       'Rejected',
+  expired:        'Expired',
+  revoked:        'Revoked',
+}
+const STATUS_CLASSES = {
+  pre_registered: 'badge-expected',
+  checked_in:     'badge-in',
+  checked_out:    'badge-out',
+  rejected:       'badge-rejected',
+  expired:        'badge-expired',
+  revoked:        'badge-revoked',
+}
+
+// revoked (resident-cancelled) and expired (timed out) are kept as two
+// separate states so a resident can tell them apart at a glance — both
+// stop the pass from working, but only one was a deliberate cancel.
 function displayStatus(v) {
   if (v.revoked) return 'revoked'
-  if (v.status === 'expected' && passStatus(v) === 'expired') return 'expired'
-  return v.status // expected | checked_in | checked_out | rejected
+  if (v.status === 'pre_registered' && v.is_expired) return 'expired'
+  return v.status
+}
+function statusLabel(v) { return STATUS_LABELS[displayStatus(v)] || v.status }
+function statusClass(v) { return STATUS_CLASSES[displayStatus(v)] || 'badge-out' }
+
+function formatDate(dateStr) {
+  if (!dateStr) return null
+  return new Date(dateStr).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
+}
+function formatTime(timeStr) {
+  if (!timeStr) return null
+  return timeStr.slice(0, 5)
+}
+function formatDateTime(dtStr) {
+  if (!dtStr) return ''
+  return new Date(dtStr).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })
 }
 
-const DISPLAY_LABELS = {
-  expected: 'Expected', checked_in: 'Checked In', checked_out: 'Checked Out',
-  rejected: 'Rejected', revoked: 'Revoked', expired: 'Expired',
-}
-const DISPLAY_CLASSES = {
-  expected: 'badge-expected', checked_in: 'badge-in', checked_out: 'badge-out',
-  rejected: 'badge-rejected', revoked: 'badge-revoked', expired: 'badge-expired',
-}
-function statusLabel(v) { return DISPLAY_LABELS[displayStatus(v)] }
-function statusClass(v) { return DISPLAY_CLASSES[displayStatus(v)] }
-
-function passTypeLabel(v) {
-  return v.pass_type === 'pre_register' ? 'Pre-registered' : 'Walk-in'
-}
-
-function formatExpiry(v) {
-  return new Date(v.expiry_at).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })
-}
-
-// ADDED: single place for the "Opens X" / "Expires X" line, now shown
-// consistently across Upcoming, Checked In, and Active Passes.
+// Distinct wording for each way a pass stops being usable, so "resident
+// cancelled it" never looks the same as "it just ran out of time."
 function expiryBadgeText(v) {
-  if (v.valid_from && new Date() < new Date(v.valid_from)) {
-    return `Opens ${new Date(v.valid_from).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}`
-  }
-  return `Expires ${formatExpiry(v)}`
+  if (v.revoked)  return `Revoked ${formatDateTime(v.revoked_at)}`
+  if (!v.expires_at) return null
+  if (v.is_expired) return `Expired ${formatDateTime(v.expires_at)}`
+  return `Expires ${formatDateTime(v.expires_at)}`
 }
 
-function formatShort(date) {
-  if (!date) return ''
-  return date.toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })
+function visitTypeLabel(v) {
+  return v.visit_type === 'walk_in' ? 'Walk-in' : 'Pre-registered'
 }
 
-// CHANGED: Upcoming now shows only visitors who haven't arrived yet — no
-// checked-in, no checked-out. Those live in their own tabs now.
+function visitorMeta(v) {
+  const parts = []
+  const d = formatDate(v.expected_date)
+  const t = formatTime(v.expected_time)
+  if (d) parts.push(t ? `${d}, ${t}` : d)
+  if (v.reason) parts.push(v.reason)
+  return parts.length ? parts.join(' · ') : 'No fixed date'
+}
+
+// ── tabs ───────────────────────────────────────────────────────
+
 const upcoming = computed(() =>
-  visitors.value.filter(v => displayStatus(v) === 'expected')
+  visitors.value.filter(v => v.status === 'pre_registered' && !v.is_expired)
 )
-
 const checkedIn = computed(() => visitors.value.filter(v => v.status === 'checked_in'))
 
-// ADDED: Active Passes — every pass that's still usable right now (not
-// revoked, not expired), regardless of where the visitor is in their visit.
-// This is what gives residents a place to revoke a pass that isn't sitting
-// in Upcoming anymore (e.g. a multi-entry pass mid-visit or checked out).
+// Security-flagged unregistered visitors waiting on this resident's
+// approval. No separate fetch needed — these come back in the same
+// GET /visitors response, just filtered by status.
+const pendingApprovals = computed(() =>
+  visitors.value.filter(v => v.status === 'awaiting_approval')
+)
+
+async function approveGateRequest(v) {
+  try {
+    await api.patch(`/visitors/${v.id}/approve`)
+    await fetchVisitors()
+  } catch (err) {
+    formError.value = err.response?.data?.error || 'Could not approve visitor'
+    setTimeout(() => formError.value = '', 5000)
+  }
+}
+
+async function denyGateRequest(v) {
+  try {
+    await api.patch(`/visitors/${v.id}/deny`)
+    await fetchVisitors()
+  } catch (err) {
+    formError.value = err.response?.data?.error || 'Could not deny visitor'
+    setTimeout(() => formError.value = '', 5000)
+  }
+}
+
+// "Active" = still usable right now: not expired, and not in a terminal
+// rejected/checked_out state.
 const activePasses = computed(() =>
-  visitors.value.filter(v => passStatus(v) === 'valid')
+  visitors.value.filter(v => !v.revoked && !v.is_expired && ['pre_registered', 'checked_in'].includes(v.status))
 )
 
 const visibleVisitors = computed(() => {
@@ -188,120 +168,79 @@ const visibleVisitors = computed(() => {
   return activePasses.value
 })
 
-function revokeCode(id) {
-  const v = visitors.value.find(v => v.id === id)
-  if (v) { v.revoked = true; v.revoked_at = new Date().toISOString() }
+// ── revoke ─────────────────────────────────────────────────────
+// IMPORTANT: there is no /visitors/<id>/revoke route on the backend yet.
+// reject_visitor exists but is security-only, so residents get a 403 if
+// this hits that route. You'll need to add something like:
+//
+//   @visitors_bp.route('/<visitor_id>/revoke', methods=['PATCH'])
+//   @login_required
+//   def revoke_visitor(visitor_id):
+//       if current_user.role != 'resident':
+//           return jsonify({'error': 'Only residents can revoke their own passes'}), 403
+//       visitor = Visitor.query.get_or_404(visitor_id)
+//       if visitor.resident_id != current_user.resident.id:
+//           return jsonify({'error': 'Not your visitor'}), 403
+//       if visitor.status != 'pre_registered':
+//           return jsonify({'error': 'Only an upcoming pass can be revoked'}), 400
+//       visitor.status = 'rejected'
+//       db.session.commit()
+//       return jsonify({'message': 'Pass revoked', 'visitor': visitor_to_dict(visitor)}), 200
+//
+// Until that route exists this call will 404 and the catch below will
+// surface a normal error message instead of silently breaking the page.
+async function revokeCode(id) {
+  try {
+    await api.patch(`/visitors/${id}/revoke`)
+    await fetchVisitors()
+  } catch (err) {
+    formError.value = err.response?.data?.error || 'Could not revoke pass — backend route may be missing'
+    setTimeout(() => formError.value = '', 5000)
+  }
 }
 
-function editVisitor(v) {
-  editingId.value        = v.id
-  mode.value              = 'Pre-register'
-  visitorName.value       = v.name
-  phone.value             = v.phone === '—' ? '' : v.phone
-  purpose.value           = v.purpose
-  expectedDate.value      = ''
-  expectedTime.value      = ''
-  preregDuration.value    = 'day_of'
-  customExpiryDate.value  = ''
-  formError.value         = ''
-}
-
-function cancelEdit() {
-  editingId.value = null
-  visitorName.value = ''
-  phone.value = ''
-  purpose.value = ''
-  expectedDate.value = ''
-  expectedTime.value = ''
-  preregDuration.value = 'day_of'
-  customExpiryDate.value = ''
-  formError.value = ''
-}
-
-function dismissAlert(id) {
-  securityAlerts.value = securityAlerts.value.filter(a => a.id !== id)
-}
-
-function approveUnexpected(alert) {
-  visitors.value.unshift({
-    id: generateId(), name: alert.visitor_name, phone: '—', date: 'Today', time: 'Now', flat: alert.flat,
-    code: generateCode(), status: 'expected', purpose: 'Approved at gate', pass_type: 'walk_in',
-    created_at: new Date().toISOString(), expiry_at: addMinutes(15).toISOString(),
-    revoked: false, revoked_at: null, visit_log: [],
-  })
-  dismissAlert(alert.id)
-}
+// ── create / submit ───────────────────────────────────────────
 
 async function submit() {
   formError.value = ''
 
   if (!visitorName.value.trim()) { formError.value = 'Visitor name is required'; return }
-  if (mode.value === 'Pre-register' && preregDuration.value === 'day_of' && (!expectedDate.value || !expectedTime.value)) {
-    formError.value = 'Expected date and time are required for a single-day pass'; return
-  }
-  if (mode.value === 'Pre-register' && preregDuration.value === 'custom' && !customExpiryDate.value) {
-    formError.value = 'Please select a valid-until date'; return
+  if (mode.value === 'Pre-register' && (!expectedDate.value || !expectedTime.value)) {
+    formError.value = 'Expected date and time are required for pre-registration'; return
   }
 
-  let expiry_at
-  if (mode.value === 'Walk-in') {
-    expiry_at = addMinutes(walkinDuration.value)
-  } else if (preregDuration.value === 'day_of') {
-    expiry_at = new Date(expectedDate.value + 'T23:59:59')
-  } else if (preregDuration.value === 'custom') {
-    expiry_at = new Date(customExpiryDate.value + 'T23:59:59')
-  } else {
-    expiry_at = addDays(Number(preregDuration.value))
-  }
-
-  if (editingId.value) {
-    const v = visitors.value.find(v => v.id === editingId.value)
-    if (v) {
-      v.name = visitorName.value
-      v.phone = phone.value || '—'
-      v.date = expectedDate.value || v.date
-      v.time = expectedTime.value || v.time
-      v.purpose = purpose.value || v.purpose
-      v.expiry_at = expiry_at.toISOString()
-    }
-    successMsg.value = `Pass updated for ${visitorName.value}`
-    editingId.value = null
-  } else {
-    const res = await fetch(`${API}/visitors`, {
-      method: 'POST', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: visitorName.value,
-        phone: phone.value,
-        expected_date: expectedDate.value || null,
-        expected_time: expectedTime.value || null,
-        reason: purpose.value,
-      }),
+  loading.value = true
+  try {
+    const response = await api.post('/visitors', {
+      name: visitorName.value,
+      phone: phone.value || null,
+      expected_date: mode.value === 'Pre-register' ? (expectedDate.value || null) : null,
+      expected_time: mode.value === 'Pre-register' ? (expectedTime.value || null) : null,
+      reason: reason.value || null,
+      visit_type: mode.value === 'Pre-register' ? 'pre_registered' : 'walk_in',
+      duration_minutes: mode.value === 'Walk-in' ? walkinDuration.value : null,
     })
-    const data = await res.json()
-    successMsg.value = `Gate pass ${data.pass_code} generated for ${visitorName.value}`
-    // refresh the list from real data instead of pushing a fake local object
-    visitors.value = await loadVisitors()
+
+    successMsg.value = `Gate pass ${response.data.pass_code} generated for ${visitorName.value}`
+    visitorName.value = ''; phone.value = ''; expectedDate.value = ''; expectedTime.value = ''
+    reason.value = ''; walkinDuration.value = 15
+
+    setTimeout(() => successMsg.value = '', 5000)
+    await fetchVisitors()
+  } catch (err) {
+    formError.value = err.response?.data?.error || 'Failed to register visitor'
+  } finally {
+    loading.value = false
   }
-  visitorName.value = ''; phone.value = ''; expectedDate.value = ''; expectedTime.value = ''
-  purpose.value = ''; walkinDuration.value = 15; preregDuration.value = 'day_of'; customExpiryDate.value = ''
-  setTimeout(() => successMsg.value = '', 5000)
 }
 
-function visitorMeta(v) {
-  if (v.date && v.date !== 'No fixed date') {
-    return `${v.time ? `${v.date}, ${v.time}` : v.date} · ${v.purpose}`
-  }
-  return `No fixed date · ${v.purpose}`
-}
+// ── search / regenerate ─────────────────────────────────────
+// candidates for "generate again": passes that are done and unusable —
+// rejected or expired. There's no "revoked" state distinct from
+// rejected on the backend, so a revoked pass shows up here as Rejected.
 
-// FIX: candidates now use displayStatus, matching the single badge shown
-// everywhere else, instead of a second independent passStatus check
 const regenerateCandidates = computed(() => {
-  const base = visitors.value.filter(v =>
-    v.pass_type === 'pre_register' &&
-    (displayStatus(v) === 'revoked' || displayStatus(v) === 'expired')
-  )
+  const base = visitors.value.filter(v => ['rejected', 'expired', 'revoked'].includes(displayStatus(v)))
   if (!regenerateQuery.value.trim()) return base
   const q = regenerateQuery.value.toLowerCase()
   return base.filter(v => v.name.toLowerCase().includes(q))
@@ -310,27 +249,30 @@ const regenerateCandidates = computed(() => {
 function openRegenerate() { regenerateQuery.value = ''; showRegenerate.value = true }
 
 function generatePassAgain(v) {
-  editingId.value = null
   mode.value = 'Pre-register'
   visitorName.value = v.name
-  phone.value = v.phone === '—' ? '' : v.phone
-  purpose.value = v.purpose
+  phone.value = v.phone || ''
+  reason.value = v.reason || ''
   expectedDate.value = ''; expectedTime.value = ''
-  preregDuration.value = 'day_of'; customExpiryDate.value = ''
   showRegenerate.value = false
 }
+
+// ── history ────────────────────────────────────────────────
+// Built from real timestamps only: created_at, check_in_time,
+// check_out_time. No visit_log array exists on the model (one
+// check-in/out pair per visitor row), so this is a single-entry log
+// per visitor rather than a repeat-visit history.
 
 const activityLog = computed(() => {
   const events = []
   visitors.value.forEach(v => {
-    events.push({ type: 'pass_created', visitor: v.name, flat: v.flat, at: v.created_at })
-    ;(v.visit_log || []).forEach(entry => {
-      events.push({ type: 'checked_in', visitor: v.name, flat: v.flat, at: entry.checked_in_at })
-      if (entry.checked_out_at) events.push({ type: 'checked_out', visitor: v.name, flat: v.flat, at: entry.checked_out_at })
-    })
-    if (v.revoked_at) events.push({ type: 'revoked', visitor: v.name, flat: v.flat, at: v.revoked_at })
+    events.push({ type: 'pass_created', visitor: v.name, at: v.created_at })
+    if (v.check_in_time)  events.push({ type: 'checked_in',  visitor: v.name, at: v.check_in_time })
+    if (v.check_out_time) events.push({ type: 'checked_out', visitor: v.name, at: v.check_out_time })
+    if (v.status === 'rejected') events.push({ type: 'rejected', visitor: v.name, at: v.check_in_time || v.created_at })
+    if (v.revoked) events.push({ type: 'revoked', visitor: v.name, at: v.revoked_at })
   })
-  return events.sort((a, b) => new Date(b.at) - new Date(a.at))
+  return events.filter(e => e.at).sort((a, b) => new Date(b.at) - new Date(a.at))
 })
 
 function sameDay(a, b) {
@@ -348,12 +290,13 @@ const filteredHistory = computed(() => {
 function openHistory(name = '') { historyQuery.value = name; historyDate.value = ''; showHistory.value = true }
 
 const EVENT_TEXT = {
-  pass_created: e => `Pass created for ${e.visitor} · ${e.flat}`,
-  checked_in:   e => `${e.visitor} checked in · ${e.flat}`,
-  checked_out:  e => `${e.visitor} checked out · ${e.flat}`,
-  revoked:      e => `${e.visitor}'s pass revoked · ${e.flat}`,
+  pass_created: e => `Pass created for ${e.visitor}`,
+  checked_in:   e => `${e.visitor} checked in`,
+  checked_out:  e => `${e.visitor} checked out`,
+  rejected:     e => `${e.visitor}'s pass rejected`,
+  revoked:      e => `${e.visitor}'s pass revoked`,
 }
-const EVENT_DOT_CLASS = { checked_in: 'dot-in', checked_out: 'dot-out', revoked: 'dot-revoked' }
+const EVENT_DOT_CLASS = { checked_in: 'dot-in', checked_out: 'dot-out', rejected: 'dot-revoked', revoked: 'dot-revoked' }
 function eventText(e) { return EVENT_TEXT[e.type](e) }
 function eventDotClass(type) { return EVENT_DOT_CLASS[type] || 'dot-created' }
 </script>
@@ -368,15 +311,15 @@ function eventDotClass(type) { return EVENT_DOT_CLASS[type] || 'dot-created' }
       </div>
     </div>
 
-    <div v-if="securityAlerts.length" class="alerts-panel">
-      <div v-for="alert in securityAlerts" :key="alert.id" class="alert-row alert-unexpected">
+    <div v-if="pendingApprovals.length" class="alerts-panel">
+      <div v-for="v in pendingApprovals" :key="v.id" class="alert-row alert-unexpected">
         <div class="alert-info">
-          <p class="alert-text"><strong>{{ alert.visitor_name }}</strong> · {{ alert.flat }} — {{ alert.note }}</p>
-          <span class="alert-time">{{ alert.time }}</span>
+          <p class="alert-text"><strong>{{ v.name }}</strong> is at the gate — {{ v.reason }}</p>
+          <span class="alert-time">{{ formatDateTime(v.created_at) }}</span>
         </div>
         <div class="alert-actions">
-          <button class="btn-mini-primary" @click="approveUnexpected(alert)">Approve</button>
-          <button class="btn-mini" @click="dismissAlert(alert.id)">Deny</button>
+          <button class="btn-mini-primary" @click="approveGateRequest(v)">Approve</button>
+          <button class="btn-mini" @click="denyGateRequest(v)">Deny</button>
         </div>
       </div>
     </div>
@@ -389,10 +332,6 @@ function eventDotClass(type) { return EVENT_DOT_CLASS[type] || 'dot-created' }
         </div>
 
         <div v-if="successMsg" class="success-banner">✓ {{ successMsg }}</div>
-        <div v-if="editingId" class="edit-banner">
-          Editing an existing pass.
-          <button class="edit-cancel-link" @click="cancelEdit">Cancel</button>
-        </div>
 
         <div class="field">
           <label>Visitor name</label>
@@ -410,38 +349,21 @@ function eventDotClass(type) { return EVENT_DOT_CLASS[type] || 'dot-created' }
           </div>
         </div>
 
-        <template v-if="mode === 'Pre-register'">
-          <div class="field">
-            <label>Purpose of visit</label>
-            <input v-model="purpose" type="text" placeholder="e.g. Guest, Doctor, Delivery" class="n-input" />
-          </div>
+        <div class="field">
+          <label>Reason for visit</label>
+          <input v-model="reason" type="text" placeholder="e.g. Guest, Doctor, Delivery" class="n-input" />
+        </div>
 
+        <template v-if="mode === 'Pre-register'">
           <div class="two-fields">
             <div class="field">
-              <label>Expected date {{ preregDuration !== 'day_of' ? '(optional)' : '' }}</label>
+              <label>Expected date</label>
               <input v-model="expectedDate" type="date" class="n-input" />
             </div>
             <div class="field">
-              <label>Expected time {{ preregDuration !== 'day_of' ? '(optional)' : '' }}</label>
+              <label>Expected time</label>
               <input v-model="expectedTime" type="time" class="n-input" />
             </div>
-          </div>
-
-          <div class="field">
-            <label>Pass validity</label>
-            <select v-model="preregDuration" class="n-input">
-              <option v-for="o in preregDurationOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
-            </select>
-            <p class="field-hint">
-              {{ preregDuration === 'day_of'
-                  ? 'Single day — works only on the expected date above, any number of times that day.'
-                  : 'Multi-entry — valid for repeat visits any day until it expires.' }}
-            </p>
-          </div>
-
-          <div v-if="preregDuration === 'custom'" class="field">
-            <label>Valid until</label>
-            <input v-model="customExpiryDate" type="date" class="n-input" />
           </div>
         </template>
 
@@ -450,12 +372,13 @@ function eventDotClass(type) { return EVENT_DOT_CLASS[type] || 'dot-created' }
           <div class="duration-toggle">
             <button v-for="d in walkinDurationOptions" :key="d" :class="['duration-btn', { active: walkinDuration === d }]" @click="walkinDuration = d">{{ d }}m</button>
           </div>
+          <p class="field-hint">Pass auto-expires this many minutes after check-in isn't required — it starts counting down as soon as it's generated.</p>
         </div>
 
         <p v-if="formError" class="error-msg">{{ formError }}</p>
 
-        <button class="submit-btn" @click="submit">
-          {{ editingId ? 'Save changes' : (mode === 'Pre-register' ? 'Generate gate pass' : 'Log walk-in') }}
+        <button class="submit-btn" @click="submit" :disabled="loading">
+          {{ loading ? 'Registering...' : (mode === 'Pre-register' ? 'Generate gate pass' : 'Log walk-in') }}
         </button>
       </div>
 
@@ -473,33 +396,34 @@ function eventDotClass(type) { return EVENT_DOT_CLASS[type] || 'dot-created' }
           </div>
         </div>
 
-        <div class="visitors-list">
+        <div v-if="visitorsLoading" class="empty-state"><p>Loading...</p></div>
+
+        <div v-else class="visitors-list">
           <div v-for="v in visibleVisitors" :key="v.id" class="visitor-card">
             <div class="visitor-avatar">{{ v.name.charAt(0) }}</div>
 
             <div class="visitor-info">
               <div class="visitor-top">
                 <button class="visitor-name name-link" @click="openHistory(v.name)">{{ v.name }}</button>
-                <span class="pass-type-tag">{{ passTypeLabel(v) }}</span>
+                <span :class="['visit-type-tag', v.visit_type === 'walk_in' ? 'tag-walkin' : 'tag-prereg']">{{ visitTypeLabel(v) }}</span>
               </div>
               <span class="visitor-meta">{{ visitorMeta(v) }}</span>
               <div class="visitor-badges">
-                <!-- FIX: exactly one status badge now, no contradiction possible -->
                 <span :class="['badge', statusClass(v)]">{{ statusLabel(v) }}</span>
-                <!-- CHANGED: expiry/opens line now shown on every tab (Upcoming,
-                     Checked In, Active Passes), not just Upcoming -->
-                <span v-if="!v.revoked" class="badge-expiry">{{ expiryBadgeText(v) }}</span>
+                <span v-if="expiryBadgeText(v)" class="badge-expiry">{{ expiryBadgeText(v) }}</span>
               </div>
             </div>
 
             <div class="visitor-actions">
-              <span class="pass-code">{{ v.code }}</span>
+              <span class="pass-code">{{ v.pass_code }}</span>
               <div class="action-row">
-                <button v-if="listTab === 'upcoming' && displayStatus(v) === 'expected'" class="action-link" @click="editVisitor(v)">Edit</button>
-                <!-- CHANGED: revoke now also available from the Active Passes tab,
-                     for any pass that's still valid (expected, checked in, or
-                     checked-out-but-valid), not just ones sitting in Upcoming -->
-                <button v-if="passStatus(v) === 'valid' && (listTab === 'active' || displayStatus(v) === 'expected')" class="revoke-btn" @click="revokeCode(v.id)">Revoke</button>
+                <button
+                  v-if="!v.revoked && !v.is_expired && v.status === 'pre_registered'"
+                  class="revoke-btn"
+                  @click="revokeCode(v.id)"
+                >
+                  Revoke
+                </button>
               </div>
             </div>
           </div>
@@ -532,7 +456,7 @@ function eventDotClass(type) { return EVENT_DOT_CLASS[type] || 'dot-created' }
               <span :class="['history-dot', eventDotClass(event.type)]"></span>
               <div class="history-content">
                 <span class="history-text">{{ eventText(event) }}</span>
-                <span class="history-time">{{ formatShort(new Date(event.at)) }}</span>
+                <span class="history-time">{{ formatDateTime(event.at) }}</span>
               </div>
             </div>
             <div v-if="filteredHistory.length === 0" class="empty-state"><p>No activity found</p></div>
@@ -551,7 +475,7 @@ function eventDotClass(type) { return EVENT_DOT_CLASS[type] || 'dot-created' }
           <div class="history-filters">
             <input v-model="regenerateQuery" type="text" placeholder="Search by visitor name..." class="n-input" />
           </div>
-          <p class="field-hint" style="margin-bottom: 12px;">Showing pre-registered visitors whose pass has been revoked or expired.</p>
+          <p class="field-hint" style="margin-bottom: 12px;">Showing visitors whose pass has been rejected/revoked or expired.</p>
           <div class="history-list">
             <div v-for="v in regenerateCandidates" :key="v.id" class="search-row">
               <div class="search-info">
@@ -605,8 +529,6 @@ function eventDotClass(type) { return EVENT_DOT_CLASS[type] || 'dot-created' }
 
 .field-hint { font-size: 11px; color: var(--color-text-muted); margin-top: 6px; }
 .success-banner { background: var(--color-success-bg); color: var(--color-success-text); border: 1px solid var(--color-success); border-radius: var(--radius-md); padding: 10px 14px; font-size: var(--font-size-xs); font-weight: 600; margin-bottom: 14px; }
-.edit-banner { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--color-info-bg); color: var(--color-info-text); border: 1px solid var(--color-info-text); border-radius: var(--radius-md); padding: 10px 14px; font-size: var(--font-size-xs); font-weight: 600; margin-bottom: 14px; }
-.edit-cancel-link { font-size: var(--font-size-xs); font-weight: 700; color: inherit; background: none; border: none; text-decoration: underline; cursor: pointer; }
 
 .field { margin-bottom: 14px; }
 .field:last-of-type { margin-bottom: 0; }
@@ -620,6 +542,7 @@ label { display: block; font-size: var(--font-size-xs); font-weight: 700; color:
 
 .submit-btn { width: 100%; height: 44px; border-radius: var(--radius-md); background: var(--c-800); color: #fff; font-size: var(--font-size-md); font-weight: 700; box-shadow: var(--shadow-btn); transition: background var(--transition-fast); margin-top: 18px; }
 .submit-btn:hover { background: var(--c-900); }
+.submit-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .visitors-right { display: flex; flex-direction: column; }
 .list-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
@@ -640,24 +563,25 @@ label { display: block; font-size: var(--font-size-xs); font-weight: 700; color:
 .visitor-name { font-size: var(--font-size-md); font-weight: 700; color: var(--color-text-primary); }
 .name-link { background: none; border: none; padding: 0; cursor: pointer; text-align: left; }
 .name-link:hover { text-decoration: underline; color: var(--c-700); }
-.pass-type-tag { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px; color: var(--color-text-muted); }
 .visitor-meta { font-size: var(--font-size-xs); color: var(--color-text-muted); }
 .visitor-badges { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+
+.visit-type-tag { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px; padding: 2px 7px; border-radius: var(--radius-pill); }
+.tag-prereg { background: var(--color-bg); color: var(--color-text-muted); }
+.tag-walkin { background: #FFF3E0; color: #B45309; }
 
 .badge { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: var(--radius-pill); }
 .badge-expected { background: var(--color-info-bg); color: var(--color-info-text); }
 .badge-in       { background: var(--color-success-bg); color: var(--color-success-text); }
 .badge-out      { background: var(--color-bg); color: var(--color-text-muted); }
 .badge-rejected { background: var(--color-danger-bg); color: var(--color-danger-text); }
-.badge-expired  { background: var(--color-danger-bg); color: var(--color-danger-text); }
+.badge-expired  { background: #FFF3E0; color: #B45309; }
 .badge-revoked  { background: var(--color-danger-bg); color: var(--color-danger-text); }
 .badge-expiry   { font-size: 11px; color: var(--color-text-muted); }
 
 .visitor-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; flex-shrink: 0; }
 .pass-code { font-family: ui-monospace, monospace; font-size: 12px; font-weight: 800; color: var(--c-800); background: #E9F4FA; padding: 4px 9px; border-radius: var(--radius-sm); letter-spacing: 0.5px; }
 .action-row { display: flex; align-items: center; gap: 10px; }
-.action-link { font-size: 11px; font-weight: 700; color: var(--c-700); background: none; border: none; cursor: pointer; padding: 0; }
-.action-link:hover { text-decoration: underline; }
 .revoke-btn { height: 24px; padding: 0 9px; border-radius: var(--radius-sm); border: 1.5px solid var(--color-danger-text); background: transparent; color: var(--color-danger-text); font-size: 11px; font-weight: 700; transition: all var(--transition-fast); }
 .revoke-btn:hover { background: var(--color-danger-bg); }
 

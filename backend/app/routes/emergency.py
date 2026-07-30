@@ -12,17 +12,32 @@ emergency_bp = Blueprint('emergency', __name__)
 
 # ── helper ────────────────────────────────────────────────────
 
+def _display_name(user):
+    if not user:
+        return None
+    if user.role == 'resident' and user.resident:
+        return user.resident.name
+    if user.role == 'secretary' and user.secretary:
+        return user.secretary.name
+    if user.role == 'security' and user.security:
+        return user.security.name
+    return None
+
+
 def alert_to_dict(a):
     return {
-        'id':          a.id,
-        'type':        a.type,
-        'message':     a.message,
-        'created_by':  a.created_by,
-        'status':      a.status,
-        'location_info': a.location_info,
-        'severity':    a.severity,
-        'resolved_at': a.resolved_at.isoformat() if a.resolved_at else None,
-        'created_at':  a.created_at.isoformat() if a.created_at else None,
+        'id':               a.id,
+        'type':             a.type,
+        'message':          a.message,
+        'created_by':       a.created_by,
+        'created_by_name':  _display_name(a.creator),
+        'status':           a.status,
+        'location_info':    a.location_info,
+        'severity':         a.severity,
+        'resolved_at':      a.resolved_at.isoformat() if a.resolved_at else None,
+        'resolved_by':      a.resolved_by,
+        'resolved_by_name': _display_name(a.resolver),
+        'created_at':       a.created_at.isoformat() if a.created_at else None,
     }
 
 
@@ -111,6 +126,7 @@ def resolve_alert(alert_id):
     alert = EmergencyAlert.query.get_or_404(alert_id)
     alert.status      = 'resolved'
     alert.resolved_at = datetime.now(timezone.utc)
+    alert.resolved_by = current_user.id
 
     db.session.commit()
 

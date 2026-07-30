@@ -1,8 +1,14 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import api from '../../api/axios'
 
-const selectedType = ref(null)
-const showConfirm  = ref(false)
+const selectedType   = ref(null)
+const showConfirm    = ref(false)
+const sending        = ref(false)
+const sendError      = ref('')
+const historyLoading = ref(true)
+const resolvingId  = ref(null)
+const resolveError = ref('')
 
 // ADDED: optional context captured before sending — description only makes
 // sense for 'Other' (the other types are already self-explanatory), location
@@ -20,10 +26,39 @@ const alertTypes = [
 ]
 
 // mock alert history - replace with API in Sprint 1
-const alertHistory = ref([
-  { type: 'Public',  msg: 'Fire drill scheduled at 4 PM today. Please cooperate with the marshals.', time: '28 Jun, 3:00 PM', by: 'Secretary' },
-  { type: 'Private', msg: 'Suspicious person loitering near B-wing gate. Security to verify.',        time: '25 Jun, 9:12 PM', by: 'Security'  },
-])
+const alertHistory = ref([])
+
+onMounted(fetchAlerts)
+
+async function fetchAlerts() {
+  historyLoading.value = true
+  try {
+    const response = await api.get('/emergency')
+    alertHistory.value = response.data.alerts.map(mapAlert)
+  } catch (err) {
+    console.error('Failed to load alert history')
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+function mapAlert(a) {
+  return {
+    id:          a.id,           // ADDED — needed to resolve
+    type:        a.type,
+    msg:         a.message,
+    time:        formatTime(a.created_at),
+    by:          a.created_by_name || 'Unknown',
+    status:      a.status,               // ADDED
+    resolvedAt:  a.resolved_at,          // ADDED
+    resolvedBy:  a.resolved_by_name,     // ADDED
+  }
+}
+
+function formatTime(iso) {
+  if (!iso) return ''
+  return new Date(iso).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })
+}
 
 // ADDED: builds "Tower A, Floor 3, Unit 402" style fragment from whichever
 // of the three optional fields were actually filled in
@@ -68,16 +103,36 @@ function closeConfirm() {
   locationTower.value    = ''
   locationFloor.value    = ''
   locationUnit.value     = ''
+  sendError.value        = ''
 }
 
-function sendAlert() {
-  alertHistory.value.unshift({
-    type: selectedType.value.label === 'Fire / Evacuate' ? 'Public' : 'Private',
-    msg:  previewText.value,
-    time: 'Just now',
-    by:   'Security',
-  })
-  closeConfirm()
+async function sendAlert() {
+  sendError.value = ''
+  sending.value   = true
+  try {
+    await api.post('/emergency', {
+      type:    selectedType.value.label === 'Fire / Evacuate' ? 'Public' : 'Private',
+      message: previewText.value,
+    })
+    await fetchAlerts()
+    closeConfirm()
+  } catch (err) {
+    sendError.value = err.response?.data?.error || 'Failed to send alert'
+  } finally {
+    sending.value = false
+  }
+}
+async function resolveAlert(id) {
+  resolveError.value = ''
+  resolvingId.value  = id
+  try {
+    await api.patch(`/emergency/${id}/resolve`)
+    await fetchAlerts()
+  } catch (err) {
+    resolveError.value = err.response?.data?.error || 'Failed to resolve alert'
+  } finally {
+    resolvingId.value = null
+  }
 }
 
 function accentColor(type) {
@@ -135,9 +190,25 @@ function accentColor(type) {
               <span class="history-by">by {{ alert.by }}</span>
             </div>
             <p class="history-msg">{{ alert.msg }}</p>
+              <div class="history-footer">
+                <span v-if="alert.status === 'resolved'" class="history-resolved">
+                  Resolved by {{ alert.resolvedBy || 'Unknown' }} · {{ formatTime(alert.resolvedAt) }}
+                </span>
+                <button
+                  v-else
+                  class="resolve-btn"
+                  :disabled="resolvingId === alert.id"
+                  @click="resolveAlert(alert.id)"
+                >
+                  {{ resolvingId === alert.id ? 'Resolving...' : 'Mark resolved' }}
+                </button>
+              </div>
+
+            <p v-if="resolveError" class="error-msg">{{ resolveError }}</p>
           </div>
 
-          <div v-if="alertHistory.length === 0" class="empty-history">
+          <div v-if="historyLoading" class="empty-history">Loading...</div>
+          <div v-else-if="alertHistory.length === 0" class="empty-history">
             No alerts raised yet
           </div>
         </div>
@@ -182,9 +253,13 @@ function accentColor(type) {
           {{ previewText }}
         </div>
 
+        <p v-if="sendError" class="error-msg" style="width:100%; text-align:left;">{{ sendError }}</p>
+
         <div class="confirm-actions">
           <button class="cancel-btn" @click="closeConfirm">Cancel</button>
-          <button class="send-btn" @click="sendAlert">Yes, send now</button>
+          <button class="send-btn" @click="sendAlert" :disabled="sending">
+            {{ sending ? 'Sending...' : 'Yes, send now' }}
+          </button>
         </div>
 
       </div>
@@ -303,6 +378,46 @@ function accentColor(type) {
   color: var(--color-text-primary);
   line-height: 1.5;
 }
+
+.history-status {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: var(--radius-pill);
+}
+
+.status-active    { background: var(--color-danger-bg);  color: var(--color-danger-text);  }
+.status-resolved  { background: var(--color-success-bg); color: var(--color-success-text); }
+
+.history-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.history-resolved {
+  font-size: var(--font-size-xs);
+  color: var(--color-success-text);
+  font-weight: 600;
+}
+
+.resolve-btn {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  border: 1.5px solid var(--c-700);
+  background: transparent;
+  color: var(--c-700);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  transition: all var(--transition-fast);
+}
+
+.resolve-btn:hover:not(:disabled) { background: var(--color-bg); }
+.resolve-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
 
 .empty-history {
   font-size: var(--font-size-md);

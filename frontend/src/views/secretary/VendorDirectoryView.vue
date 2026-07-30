@@ -57,7 +57,7 @@ const editingId = ref(null)
 
 const emptyForm = () => ({
   name: '', phone: '', category: 'plumber', working_hours: '',
-  status: 'active', is_salaried: false, salary_amount: null,
+  status: 'active', is_salaried: false, salary: null,   // was salary
 })
 
 const form = ref(emptyForm())
@@ -88,14 +88,14 @@ async function saveVendor() {
     formError.value = 'Name, phone and category are required'
     return
   }
-  if (form.value.is_salaried && (!form.value.salary_amount || Number(form.value.salary_amount) <= 0)) {
+  if (form.value.is_salaried && (!form.value.salary || Number(form.value.salary) <= 0)) {
     formError.value = 'Enter a monthly salary amount for a salaried vendor'
     return
   }
 
   const payload = {
     ...form.value,
-    salary: form.value.is_salaried ? Number(form.value.salary_amount) : null,
+    salary: form.value.is_salaried ? Number(form.value.salary) : null,
   }
 
   if (editingId.value) {
@@ -195,7 +195,7 @@ const selectedVendors = computed(() =>
 )
 
 const totalToPay = computed(() =>
-  selectedVendors.value.reduce((sum, v) => sum + (v.salary_amount || 0), 0)
+  selectedVendors.value.reduce((sum, v) => sum + (v.salary || 0), 0)
 )
 
 function confirmPaySalaries() {
@@ -205,7 +205,7 @@ function confirmPaySalaries() {
   selectedVendors.value.forEach(v => {
     paymentHistory.value.unshift({
       id: `PAY-${1000 + paymentHistory.value.length + 1}`,
-      vendorId: v.id, vendorName: v.name, amount: v.salary_amount, date: today,
+      vendorId: v.id, vendorName: v.name, amount: v.salary, date: today,
     })
   })
 
@@ -294,7 +294,7 @@ function showToast(text) {
         </div>
 
         <span v-if="vendor.is_salaried" class="pay-tag">
-          💰 Salaried · ₹{{ vendor.salary_amount?.toLocaleString('en-IN') }}/mo
+          💰 Salaried · ₹{{ vendor.salary?.toLocaleString('en-IN') }}/mo
         </span>
 
         <!-- card body -->
@@ -373,7 +373,7 @@ function showToast(text) {
 
           <template v-if="form.is_salaried">
             <label>Monthly Salary (₹) *</label>
-            <input v-model="form.salary_amount" type="number" min="0" placeholder="e.g. 18000" class="n-input" />
+            <input v-model="form.salary" type="number" min="0" placeholder="e.g. 18000" class="n-input" />
           </template>
 
           <p v-if="formError" class="error-msg">{{ formError }}</p>
@@ -401,7 +401,7 @@ function showToast(text) {
           <template v-if="detailVendor?.is_salaried">
             <div class="detail-summary">
               <span>Monthly salary</span>
-              <strong>₹{{ detailVendor.salary_amount?.toLocaleString('en-IN') }}</strong>
+              <strong>₹{{ detailVendor.salary?.toLocaleString('en-IN') }}</strong>
             </div>
             <div class="detail-summary">
               <span>Total paid to date</span>
@@ -456,7 +456,7 @@ function showToast(text) {
                   />
                   <span class="pay-row-name">{{ v.name }}</span>
                   <span class="pay-row-cat">{{ v.category }}</span>
-                  <span class="pay-row-amount">₹{{ v.salary_amount.toLocaleString('en-IN') }}</span>
+                  <span class="pay-row-amount">₹{{ v.salary.toLocaleString('en-IN') }}</span>
                 </label>
               </div>
 

@@ -251,11 +251,13 @@ def create_gate_request():
         resident_id=resident_id,
         name=name,
         phone=data.get('phone'),
+        expected_date=date_type.today(),   # ← added: gate requests are always "today"
         pass_code=pass_code,
         id_verified=False,
         status='awaiting_approval',
         visit_type='walk_in',
         reason=data.get('reason', 'At the gate, awaiting approval'),
+        vehicle_number=data.get('vehicle_number')
     )
 
     db.session.add(visitor)
@@ -265,7 +267,6 @@ def create_gate_request():
         'message': 'Gate request sent to resident',
         'visitor': visitor_to_dict(visitor),
     }), 201
-
 
 # ── PATCH /api/visitors/<id>/approve — resident approves a gate request ──
 # On approval, a 15-minute walk-in pass becomes active immediately;

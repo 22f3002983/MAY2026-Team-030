@@ -6,8 +6,10 @@ from app.models.dues import Dues
 from app.models.vendor import Vendor
 from app.models.notice import Notice
 from app.models.booking import Booking
+from app.models.visitor import Visitor
 from app.models.emergency import EmergencyAlert
 from datetime import datetime, date
+from app.extensions import db
 
 summary_bp = Blueprint('summary', __name__)
 
@@ -133,4 +135,45 @@ def secretary_summary():
             'resident_id': i.created_by,
             'created_at':  i.created_at.isoformat(),
         } for i in recent_issues],
+    }), 200
+
+def _is_timed_out(v):
+    return bool(v.expires_at and datetime.utcnow() > v.expires_at)
+
+
+@summary_bp.route('/security', methods=['GET'])
+@login_required
+def security_summary():
+    if current_user.role != 'security':
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    today     = date.today()
+    day_start = datetime.combine(today, datetime.min.time())
+    day_end   = datetime.combine(today, datetime.max.time())
+
+    todays_visitors = Visitor.query.filter(
+        db.or_(
+            Visitor.expected_date == today,
+            db.and_(Visitor.check_in_time >= day_start, Visitor.check_in_time <= day_end),
+        )
+    ).all()
+
+    visitors_inside   = Visitor.query.filter_by(status='checked_in').count()
+    awaiting_approval = sum(1 for v in todays_visitors if v.status == 'awaiting_approval')
+    pre_registered    = sum(
+        1 for v in todays_visitors
+        if v.status == 'pre_registered' and not v.revoked and not _is_timed_out(v)
+    )
+    # matches "delivery"/"deliveries" in the free-text reason field —
+    # there is no dedicated visitor category for this yet
+    deliveries_today = sum(
+        1 for v in todays_visitors
+        if v.reason and ('delivery' in v.reason.lower() or 'deliveries' in v.reason.lower())
+    )
+
+    return jsonify({
+        'visitors_inside':     visitors_inside,
+        'awaiting_approval':   awaiting_approval,
+        'pre_registered':      pre_registered,
+        'deliveries_today':    deliveries_today,
     }), 200

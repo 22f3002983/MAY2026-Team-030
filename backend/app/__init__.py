@@ -50,8 +50,11 @@ def create_app():
     from app.routes.summary import summary_bp
     flask_app.register_blueprint(summary_bp, url_prefix='/api/summary')
 
-    # from app.routes.profile_requests import profile_requests_bp
-    # flask_app.register_blueprint(profile_requests_bp, url_prefix='/api/profile-requests')
+    from app.routes.profile_requests import profile_requests_bp
+    flask_app.register_blueprint(profile_requests_bp, url_prefix='/api/profile-requests')
+
+    from app.routes.profile import profile_bp
+    flask_app.register_blueprint(profile_bp, url_prefix='/api/profile')
 
     from app.routes.document_requests import document_requests_bp
     flask_app.register_blueprint(document_requests_bp, url_prefix='/api/document-requests')

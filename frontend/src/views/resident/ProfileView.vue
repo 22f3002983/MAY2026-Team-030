@@ -1,6 +1,7 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useAuthStore } from '../../stores/auth'
+import api from '../../api/axios'
 
 const auth = useAuthStore()
 
@@ -8,17 +9,30 @@ const isEditing  = ref(false)
 const successMsg = ref('')
 
 const profile = ref({
-  name:          'Ravi Kumar',
-  flat:          'A-402, A Wing',
-  email:         'ravi@raghvendrasai.in',
-  phone:         '+91 98480 11771',
-  members:       '4 (2 adults, 2 kids)',
-  vehicle1:       'Hero Honda (2 Wheeler)',
-  vehicle1_no:       'TS09 AB 4402',
-  vehicle2:      'Kia Carens (4 Wheeler)',
-  vehicle2_no:      'TS09 XY 7812',
-  occupant_type: 'Owner',
+  name: '', flat: '', email: '', phone: '', members: '',
+  vehicle1: '', vehicle1_no: '', vehicle2: '', vehicle2_no: '',
+  occupant_type: '',
 })
+
+async function loadProfile() {
+  const res = await api.get('/auth/me')
+  const u = res.data.user
+  profile.value = {
+    name: u.name,
+    flat: u.flat_number || '',
+    email: u.email,
+    phone: u.phone,
+    members: u.household_size,
+    vehicle1: u.vehicle1_name || '',
+    vehicle1_no: u.vehicle1_number || '',
+    vehicle2: u.vehicle2_name || '',
+    vehicle2_no: u.vehicle2_number || '',
+    occupant_type: u.occupant_type,
+  }
+}
+
+onMounted(loadProfile)
+
 
 // editable copy — only committed on save
 const draft = ref({ ...profile.value })
@@ -36,12 +50,24 @@ function cancelEdit() {
   isEditing.value = false
 }
 
-function saveEdit() {
-  // placeholder - replace with API call in Sprint 1
-  profile.value   = { ...draft.value }
-  isEditing.value = false
-  successMsg.value = 'Profile updated successfully.'
-  setTimeout(() => successMsg.value = '', 5000)
+async function saveEdit() {
+  try {
+    await api.patch('/profile', {
+      name: draft.value.name,
+      phone: draft.value.phone,
+      household_size: draft.value.members,
+      vehicle1_name: draft.value.vehicle1,
+      vehicle1_number: draft.value.vehicle1_no,
+      vehicle2_name: draft.value.vehicle2,
+      vehicle2_number: draft.value.vehicle2_no,
+    })
+    await loadProfile()
+    isEditing.value = false
+    successMsg.value = 'Profile updated successfully.'
+    setTimeout(() => successMsg.value = '', 5000)
+  } catch (err) {
+    successMsg.value = err.response?.data?.error || 'Could not save changes'
+  }
 }
 
 const profileFields = computed(() => [

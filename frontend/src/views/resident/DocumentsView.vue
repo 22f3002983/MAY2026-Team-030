@@ -1,20 +1,14 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
+import api from '../../api/axios'
 
-/* ---------------------------------------------------------------
-   Documents — Resident view.
-   Frontend-only mock; replace with API calls when the backend is ready.
---------------------------------------------------------------- */
+const successMsg = ref('')
+const submitting = ref(false)
+const formError  = ref('')
+const loadError  = ref('')
+const loading    = ref(true)
 
-const successMsg    = ref('')
-const submitting    = ref(false)
-const formError     = ref('')
-const downloadError = ref('')
-
-const form = ref({
-  type:   'noc',
-  reason: '',
-})
+const form = ref({ type: 'noc', reason: '' })
 
 const typeOptions = [
   { value: 'noc',             label: 'NOC' },
@@ -22,13 +16,24 @@ const typeOptions = [
   { value: 'other',           label: 'Other' },
 ]
 
-// Mock data
-const requests = ref([
-  { id: 1, type: 'NOC',             reason: 'Bank loan application', status: 'ready',     requested_at: '10 Jul 2026' },
-  { id: 2, type: 'Payment Receipt', reason: 'Tax filing',            status: 'requested', requested_at: '15 Jul 2026' },
-])
+const requests = ref([])
 
-function submitRequest() {
+async function loadRequests() {
+  loading.value = true
+  loadError.value = ''
+  try {
+    const res = await api.get('/document-requests')
+    requests.value = res.data.requests
+  } catch (err) {
+    loadError.value = err.response?.data?.error || 'Failed to load requests'
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(loadRequests)
+
+async function submitRequest() {
   formError.value  = ''
   successMsg.value = ''
 
@@ -38,33 +43,24 @@ function submitRequest() {
   }
 
   submitting.value = true
-  // mock "submit" — simulate a short delay and add the row locally
-  setTimeout(() => {
-    requests.value.unshift({
-      id: requests.value.length + 1,
-      type: typeLabel(form.value.type),
+  try {
+    await api.post('/document-requests', {
+      type: form.value.type,
       reason: form.value.reason.trim(),
-      status: 'requested',
-      requested_at: 'Today',
     })
     form.value = { type: 'noc', reason: '' }
-    submitting.value = false
     successMsg.value = 'Document request submitted successfully'
+    await loadRequests()
     setTimeout(() => successMsg.value = '', 5000)
-  }, 500)
-}
-
-function typeLabel(type) {
-  return typeOptions.find(t => t.value === type)?.label || type
+  } catch (err) {
+    formError.value = err.response?.data?.error || 'Failed to submit request'
+  } finally {
+    submitting.value = false
+  }
 }
 
 function statusLabel(status) {
-  const map = {
-    requested:   'Requested',
-    in_progress: 'In Progress',
-    ready:       'Ready',
-    delivered:   'Delivered',
-  }
+  const map = { requested: 'Requested', in_progress: 'In Progress', ready: 'Ready', delivered: 'Delivered' }
   return map[status] || status
 }
 
@@ -72,11 +68,13 @@ function statusClass(status) {
   return 'status-' + status
 }
 
+function formatDate(iso) {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
 function downloadFile(r) {
-  downloadError.value = ''
-  // mock download — no real file behind this in the frontend-only version
-  downloadError.value = `Downloading ${r.type} isn't available in this preview`
-  setTimeout(() => downloadError.value = '', 5000)
+  window.open(`http://localhost:5000/api/document-requests/${r.id}/download`, '_blank')
 }
 </script>
 
@@ -90,7 +88,6 @@ function downloadFile(r) {
       </div>
     </div>
 
-    <!-- request form -->
     <div class="form-card">
       <h3 class="form-title">New request</h3>
 
@@ -115,12 +112,13 @@ function downloadFile(r) {
       </button>
     </div>
 
-    <!-- request list -->
     <div class="section-title">Your requests</div>
 
-    <p v-if="downloadError" class="error-msg">{{ downloadError }}</p>
+    <p v-if="loadError" class="error-msg">{{ loadError }}</p>
 
-    <div v-if="requests.length === 0" class="empty-state">
+    <div v-if="loading" class="empty-state"><p>Loading...</p></div>
+
+    <div v-else-if="requests.length === 0" class="empty-state">
       <p>No document requests yet</p>
     </div>
 
@@ -139,7 +137,7 @@ function downloadFile(r) {
           <tr v-for="r in requests" :key="r.id">
             <td class="type-cell">{{ r.type }}</td>
             <td class="reason-cell">{{ r.reason || '—' }}</td>
-            <td class="date-cell">{{ r.requested_at }}</td>
+            <td class="date-cell">{{ formatDate(r.requested_at) }}</td>
             <td>
               <span :class="['status-badge', statusClass(r.status)]">{{ statusLabel(r.status) }}</span>
             </td>

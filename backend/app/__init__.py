@@ -53,11 +53,11 @@ def create_app():
     # from app.routes.profile_requests import profile_requests_bp
     # flask_app.register_blueprint(profile_requests_bp, url_prefix='/api/profile-requests')
 
-    # from app.routes.document_requests import document_requests_bp
-    # flask_app.register_blueprint(document_requests_bp, url_prefix='/api/document-requests')
+    from app.routes.document_requests import document_requests_bp
+    flask_app.register_blueprint(document_requests_bp, url_prefix='/api/document-requests')
 
-    # from app.routes.notifications import notifications_bp
-    # flask_app.register_blueprint(notifications_bp, url_prefix='/api/notifications')
+    from app.routes.notifications import notifications_bp
+    flask_app.register_blueprint(notifications_bp, url_prefix='/api/notifications')
 
     # from app.routes.service_requests import service_requests_bp
     # flask_app.register_blueprint(service_requests_bp, url_prefix='/api/service-requests')

@@ -1,5 +1,7 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
+
+const API = 'http://localhost:5000/api'
 
 /* ---------------- Filters ---------------- */
 
@@ -10,7 +12,7 @@ const sortBy         = ref('priority-desc')
 const searchQuery    = ref('')
 
 const statusFilters   = ['All', 'Open', 'In Progress', 'Resolved', 'Rejected']
-const categoryOptions = ['all', 'Plumbing', 'Electrical', 'Cleaning', 'Carpentry', 'Security', 'Gardening', 'Other']
+const categoryOptions = ['all', 'Plumbing', 'Electrical', 'Cleaning', 'Carpentry', 'Other']
 const priorityOptions = ['all', 'High', 'Medium', 'Low']
 const priorityRank    = { High: 3, Medium: 2, Low: 1 }
 
@@ -22,21 +24,56 @@ const durationOptions = [
   { label: '3 hr',     minutes: 180 },
 ]
 
+/* ---------------- Backend <-> UI mapping ----------------
+   Issue category/priority are just cased differently from the backend
+   ('plumbing' -> 'Plumbing'). Status needs an explicit map because the
+   backend has no 'rejected' value — we repurpose 'closed' for it, since
+   CommunityIssue.status only has open/in_progress/resolved/closed. */
+
+const STATUS_TO_FRONTEND = { open: 'Open', in_progress: 'In Progress', resolved: 'Resolved', closed: 'Rejected' }
+
+function capitalize(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s }
+
+function formatDate(iso) {
+  if (!iso) return ''
+  return new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
+}
+
+// the backend returns naive datetime strings with no trailing 'Z'/offset,
+// but they're always UTC instants (we only ever send UTC via toISOString())
+// — mark them explicitly so `new Date(...)` doesn't misread them as local time
+function asUtcIso(s) {
+  if (!s) return s
+  return /[Zz]|[+-]\d\d:\d\d$/.test(s) ? s : s + 'Z'
+}
+
+// a vendor's category is the *profession* ('plumber'); an issue's category is
+// the *problem type* ('plumbing') — different enums, so assigning a vendor
+// needs this explicit mapping to find who's actually suited to the job
+const ISSUE_TO_VENDOR_CATEGORY = {
+  Plumbing: 'plumber', Electrical: 'electrician', Carpentry: 'carpenter',
+  Cleaning: 'cleaner', Other: 'other',
+}
+
 /* ---------------- Vendors ---------------- */
 // engagementType: 'per_job' -> paid per completed task (plumbers, electricians, etc.)
-//                 'salaried' -> fixed monthly salary (security, gardeners), no per-task payment
-const vendors = [
-  { name: 'Kishore Plumbing', category: 'Plumbing',   engagementType: 'per_job' },
-  { name: 'Raju Electricals', category: 'Electrical', engagementType: 'per_job' },
-  { name: 'Suresh Carpentry', category: 'Carpentry',  engagementType: 'per_job' },
-  { name: 'Clean Society',    category: 'Cleaning',   engagementType: 'per_job' },
-  { name: 'OtisCare Lifts',   category: 'Other',      engagementType: 'per_job' },
-  { name: 'Ramesh Yadav',     category: 'Security',   engagementType: 'salaried', salary: 18000 },
-  { name: 'Ganesh Mali',      category: 'Gardening',  engagementType: 'salaried', salary: 12000 },
-]
+//                 'salaried' -> fixed monthly salary, no per-task payment
+const vendors = ref([])
+
+async function fetchVendors() {
+  const res = await fetch(`${API}/vendors?status=active`, { credentials: 'include' })
+  const data = await res.json()
+  vendors.value = (data.vendors || []).map(v => ({
+    id: v.id,
+    name: v.name,
+    category: v.category,
+    engagementType: v.is_salaried ? 'salaried' : 'per_job',
+    salary: v.salary,
+  }))
+}
 
 function vendorByName(name) {
-  return vendors.find(v => v.name === name) || null
+  return vendors.value.find(v => v.name === name) || null
 }
 
 // Mock AI time estimates per category - replace with real model output in Sprint 1
@@ -45,9 +82,19 @@ const estimatedMinutesByCategory = {
   Electrical: 45,
   Carpentry: 90,
   Cleaning: 45,
-  Security: 30,
-  Gardening: 60,
   Other: 90,
+}
+
+/* ---------------- Residents (flat lookup for the reports list) ---------------- */
+
+const residentFlats = ref({})
+
+async function fetchResidentFlats() {
+  const res = await fetch(`${API}/auth/residents`, { credentials: 'include' })
+  const data = await res.json()
+  const map = {}
+  for (const r of (data.residents || [])) map[r.id] = r.flat_number || '—'
+  residentFlats.value = map
 }
 
 /* ---------------- Issues (community / common-area only) ---------------- */
@@ -56,90 +103,56 @@ const estimatedMinutesByCategory = {
 // Multiple residents can report the same issue, so each issue carries a
 // `reports` array instead of a single resident.
 
-const issues = ref([
-  {
-    id: 'ISS-2039',
-    title: 'Corridor light flickering',
-    location: '4th floor corridor, Tower A',
-    category: 'Electrical',
-    aiCategory: 'Electrical',
-    priority: 'Medium',
-    aiPriority: 'Medium',
-    status: 'Open',
-    vendor: null, scheduledStart: null, durationMinutes: null, paymentStatus: null, paymentAmount: null,
-    date: '27 Jun',
-    aiSummary: 'Residents report a flickering light on the 4th floor corridor landing in Tower A.',
-    reports: [
-      { resident: 'Ravi Kumar', flat: 'A-402', desc: 'Corridor light flickering on the 4th floor landing', date: '27 Jun', residentPriority: 'High' },
-    ],
-  },
-  {
-    id: 'ISS-2046',
-    title: 'Lift lobby light flickering',
-    location: '4th floor corridor, Tower A',
-    category: 'Electrical',
-    aiCategory: 'Electrical',
-    priority: 'Medium',
-    aiPriority: 'Medium',
-    status: 'Open',
-    vendor: null, scheduledStart: null, durationMinutes: null, paymentStatus: null, paymentAmount: null,
-    date: '29 Jun',
-    aiSummary: 'A second, separate report of a flickering light near the 4th floor lift lobby in Tower A — likely the same fault as ISS-2039.',
-    reports: [
-      { resident: 'Meena Sharma', flat: 'A-405', desc: 'Lift lobby light on the 4th floor keeps flickering, happened twice this week', date: '29 Jun', residentPriority: 'Medium' },
-    ],
-  },
-  {
-    id: 'ISS-2050',
-    title: 'Terrace water tank overflowing',
-    location: 'Terrace, Tower B',
-    category: 'Plumbing',
-    aiCategory: 'Plumbing',
-    priority: 'High',
-    aiPriority: 'High',
-    status: 'Open',
-    vendor: null, scheduledStart: null, durationMinutes: null, paymentStatus: null, paymentAmount: null,
-    date: '30 Jun',
-    aiSummary: 'The terrace water tank in Tower B is overflowing, wasting water and posing a slip risk below.',
-    reports: [
-      { resident: 'Karan Mehta', flat: 'B-304', desc: 'Water overflowing from the terrace tank, wasting a lot of water', date: '30 Jun', residentPriority: 'High' },
-    ],
-  },
-  {
-    id: 'ISS-2028',
-    title: 'Lift grinding noise',
-    location: 'Lift 2, Tower A (between floors 3–5)',
-    category: 'Other',
-    aiCategory: 'Other',
-    priority: 'Medium',
-    aiPriority: 'Medium',
-    status: 'In Progress',
-    vendor: 'OtisCare Lifts', scheduledStart: '2026-06-22T14:00', durationMinutes: 120,
-    paymentStatus: 'pending', paymentAmount: null,
-    date: '22 Jun',
-    aiSummary: 'Lift 2 in Tower A makes a grinding noise while travelling between the 3rd and 5th floors.',
-    reports: [
-      { resident: 'Sana Iqbal', flat: 'A-108', desc: 'Lift making grinding noise between floors 3 and 5', date: '22 Jun', residentPriority: 'High' },
-    ],
-  },
-  {
-    id: 'ISS-2031',
-    title: 'Garbage not collected',
-    location: 'B-wing basement',
-    category: 'Cleaning',
-    aiCategory: 'Cleaning',
-    priority: 'Low',
-    aiPriority: 'Low',
-    status: 'Resolved',
-    vendor: 'Clean Society', scheduledStart: '2026-06-24T09:00', durationMinutes: 60,
-    paymentStatus: 'paid', paymentAmount: 800,
-    date: '24 Jun',
-    aiSummary: 'Garbage was not collected from the B-wing basement collection point.',
-    reports: [
-      { resident: 'Meena Sharma', flat: 'B-201', desc: 'Garbage not collected from B-wing basement', date: '24 Jun', residentPriority: 'Low' },
-    ],
-  },
-])
+// CommunityIssue has no payment or rejection-reason columns yet, so both are
+// kept client-side only, keyed by issue id — they reset on page reload.
+const localPayments     = ref({}) // issueId -> { status, amount }
+const rejectionReasons  = ref({}) // issueId -> reason text
+
+const issues = ref([])
+
+function mapIssue(i) {
+  const vendorObj = vendors.value.find(v => v.id === i.vendor_id)
+  const payment = localPayments.value[i.id]
+  return {
+    id: i.id,
+    title: i.title,
+    location: i.location || '—',
+    category: capitalize(i.category),
+    aiCategory: capitalize(i.ai_suggested_category || i.category),
+    priority: capitalize(i.priority),
+    aiPriority: capitalize(i.ai_suggested_priority || i.priority),
+    status: STATUS_TO_FRONTEND[i.status] || i.status,
+    vendor: vendorObj ? vendorObj.name : null,
+    scheduledStart: asUtcIso(i.vendor_start_time),
+    durationMinutes: (i.vendor_start_time && i.vendor_end_time)
+      ? Math.round((new Date(asUtcIso(i.vendor_end_time)) - new Date(asUtcIso(i.vendor_start_time))) / 60000)
+      : null,
+    paymentStatus: payment?.status ?? null,
+    paymentAmount: payment?.amount ?? null,
+    date: formatDate(i.created_at),
+    aiSummary: i.ai_suggested_description || i.description,
+    rejectionReason: rejectionReasons.value[i.id] || null,
+    reports: (i.reporters || []).map(r => ({
+      resident: r.resident_name || 'Resident',
+      flat: residentFlats.value[r.resident_id] || '—',
+      desc: r.description,
+      date: formatDate(r.created_at),
+      residentPriority: null,
+    })),
+  }
+}
+
+async function fetchIssues() {
+  const res = await fetch(`${API}/complaints`, { credentials: 'include' })
+  const data = await res.json()
+  issues.value = (data.complaints || []).map(mapIssue)
+}
+
+onMounted(async () => {
+  await fetchVendors()
+  await fetchResidentFlats()
+  await fetchIssues()
+})
 
 const visibleIssues = computed(() => issues.value.filter(i => i.status !== 'Merged'))
 
@@ -232,7 +245,9 @@ watch(detailCategory, () => {
   }
 })
 
-const vendorsForCategory = computed(() => vendors.filter(v => v.category === detailCategory.value))
+const vendorsForCategory = computed(() =>
+  vendors.value.filter(v => v.category === ISSUE_TO_VENDOR_CATEGORY[detailCategory.value])
+)
 
 function suggestVendorAI() {
   const candidates = vendorsForCategory.value
@@ -278,21 +293,33 @@ function formatSlot(iso, minutes) {
   return `${datePart}, ${timePart} · ${durLabel}`
 }
 
-function confirmAssign() {
+async function confirmAssign() {
   if (!detailVendor.value || !proposedSlot.value || conflict.value) return
   const issue = selected.value
+  const vendorObj = vendorByName(detailVendor.value)
+  if (!vendorObj) return
+
   const wasUnassigned = !issue.vendor
+  const { start, end } = proposedSlot.value
 
-  issue.category         = detailCategory.value
-  issue.vendor           = detailVendor.value
-  issue.scheduledStart   = `${detailDate.value}T${detailTime.value}`
-  issue.durationMinutes  = detailDuration.value
-  if (issue.status === 'Open') issue.status = 'In Progress'
+  const res = await fetch(`${API}/complaints/${issue.id}/assign`, {
+    method: 'PATCH', credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      vendor_id:         vendorObj.id,
+      vendor_start_time: start.toISOString(),
+      vendor_end_time:   end.toISOString(),
+    }),
+  })
 
-  const vendorMeta = vendorByName(detailVendor.value)
-  issue.paymentStatus = vendorMeta?.engagementType === 'per_job' ? 'pending' : 'not_applicable'
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    showToast(err.error || 'Failed to assign vendor')
+    return
+  }
 
-  showToast(wasUnassigned ? `${issue.id} updated — vendor assigned` : `${issue.id} updated — schedule changed`)
+  await fetchIssues()
+  showToast(wasUnassigned ? `${issue.title} — vendor assigned` : `${issue.title} — schedule changed`)
   closeDetail()
 }
 
@@ -301,14 +328,32 @@ function confirmAssign() {
 const completingVendor = computed(() => vendorByName(selected.value?.vendor))
 const needsPayment      = computed(() => completingVendor.value?.engagementType === 'per_job')
 
-function confirmComplete() {
+async function confirmComplete() {
   if (needsPayment.value && !completePaymentAmount.value) return
   const issue = selected.value
-  issue.status        = 'Resolved'
-  issue.paymentStatus = needsPayment.value ? 'paid' : 'not_applicable'
-  issue.paymentAmount = needsPayment.value ? Number(completePaymentAmount.value) : null
 
-  showToast(`${issue.id} updated — closed${needsPayment.value ? ' and payment recorded' : ''}`)
+  const res = await fetch(`${API}/complaints/${issue.id}/status`, {
+    method: 'PATCH', credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'resolved' }),
+  })
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    showToast(err.error || 'Failed to close issue')
+    return
+  }
+
+  // no payment column on CommunityIssue yet — remembered client-side only
+  localPayments.value = {
+    ...localPayments.value,
+    [issue.id]: needsPayment.value
+      ? { status: 'paid', amount: Number(completePaymentAmount.value) }
+      : { status: 'not_applicable', amount: null },
+  }
+
+  await fetchIssues()
+  showToast(`${issue.title} — closed${needsPayment.value ? ' and payment recorded' : ''}`)
   closeDetail()
 }
 
@@ -318,31 +363,55 @@ const mergeableIssues = computed(() =>
   visibleIssues.value.filter(i => i.id !== selected.value?.id && !['Resolved', 'Rejected'].includes(i.status))
 )
 
-function confirmMerge() {
+async function confirmMerge() {
   if (!mergeTarget.value) return
   const target = issues.value.find(i => i.id === mergeTarget.value)
   const current = selected.value
   if (!target || !current) return
 
-  target.reports.push(...current.reports)
-  if (priorityRank[current.priority] > priorityRank[target.priority]) {
-    target.priority = current.priority
-  }
-  current.status = 'Merged'
+  const res = await fetch(`${API}/complaints/${target.id}/merge`, {
+    method: 'POST', credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ other_issue_id: current.id }),
+  })
 
-  showToast(`${current.id} merged into ${target.id}`)
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    showToast(err.error || 'Failed to merge issues')
+    return
+  }
+
+  await fetchIssues()
+  showToast(`${current.title} merged into ${target.title}`)
   closeDetail()
 }
 
 /* ---------------- Reject ---------------- */
 
-function confirmReject() {
+async function confirmReject() {
   if (!rejectReason.value.trim()) return
   const issue = selected.value
-  issue.status = 'Rejected'
-  issue.rejectionReason = rejectReason.value.trim()
 
-  showToast(`${issue.id} rejected`)
+  // backend has no dedicated 'rejected' status — 'closed' is the closest
+  // terminal state that isn't 'resolved', so we repurpose it and label it
+  // "Rejected" in the UI (see STATUS_TO_FRONTEND)
+  const res = await fetch(`${API}/complaints/${issue.id}/status`, {
+    method: 'PATCH', credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'closed' }),
+  })
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    showToast(err.error || 'Failed to reject issue')
+    return
+  }
+
+  // no rejection-reason column on CommunityIssue yet — remembered client-side only
+  rejectionReasons.value = { ...rejectionReasons.value, [issue.id]: rejectReason.value.trim() }
+
+  await fetchIssues()
+  showToast(`${issue.title} rejected`)
   closeDetail()
 }
 

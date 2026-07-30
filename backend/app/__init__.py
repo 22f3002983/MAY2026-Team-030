@@ -25,8 +25,8 @@ def create_app():
     from app.routes.auth import auth_bp
     flask_app.register_blueprint(auth_bp, url_prefix='/api/auth')
 
-    # from app.routes.complaints import complaints_bp
-    # flask_app.register_blueprint(complaints_bp, url_prefix='/api/complaints')
+    from app.routes.complaints import complaints_bp
+    flask_app.register_blueprint(complaints_bp, url_prefix='/api/complaints')
 
     from app.routes.vendors import vendors_bp
     flask_app.register_blueprint(vendors_bp, url_prefix='/api/vendors')

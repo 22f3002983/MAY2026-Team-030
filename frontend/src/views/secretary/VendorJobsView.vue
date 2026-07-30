@@ -1,87 +1,95 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+
+const API = 'http://localhost:5000/api'
 
 const filterStatus = ref('all')
 const searchQuery = ref('')
 
 const statuses = ['all', 'assigned', 'in_progress', 'completed', 'declined']
 
-// mock data - replace with API call in Sprint 1
-const jobs = ref([
-  {
-    id: 'CMP-2043',
-    flat: 'A-402',
-    block: 'A Wing',
-    category: 'plumber',
-    description: 'Water leakage under kitchen sink',
-    vendor_name: 'Kishore Plumbing',
-    vendor_phone: '+91 98480 11223',
-    assigned_date: '28 Jun 2026',
-    deadline: '30 Jun 2026',
-    status: 'in_progress',
-    whatsapp_status: 'accepted',
-  },
-  {
-    id: 'CMP-2044',
-    flat: 'B-201',
-    block: 'B Wing',
-    category: 'electrician',
-    description: 'Main switch tripping repeatedly',
-    vendor_name: 'Raju Electricals',
-    vendor_phone: '+91 97400 33441',
-    assigned_date: '29 Jun 2026',
-    deadline: '1 Jul 2026',
-    status: 'assigned',
-    whatsapp_status: 'notified',
-  },
-  {
-    id: 'CMP-2040',
-    flat: 'C-105',
-    block: 'C Wing',
-    category: 'carpenter',
-    description: 'Bedroom door hinge broken',
-    vendor_name: 'Suresh Carpentry',
-    vendor_phone: '+91 96300 22110',
-    assigned_date: '25 Jun 2026',
-    deadline: '27 Jun 2026',
-    status: 'completed',
-    whatsapp_status: 'accepted',
-  },
-  {
-    id: 'CMP-2038',
-    flat: 'D-303',
-    block: 'D Wing',
-    category: 'plumber',
-    description: 'Low water pressure in bathroom',
-    vendor_name: 'Kishore Plumbing',
-    vendor_phone: '+91 98480 11223',
-    assigned_date: '24 Jun 2026',
-    deadline: '26 Jun 2026',
-    status: 'declined',
-    whatsapp_status: 'declined',
-  },
-  {
-    id: 'CMP-2050',
-    flat: 'A-110',
-    block: 'A Wing',
-    category: 'electrician',
-    description: 'Ceiling fan not working in living room',
-    vendor_name: 'Raju Electricals',
-    vendor_phone: '+91 97400 33441',
-    assigned_date: '30 Jun 2026',
-    deadline: '2 Jul 2026',
-    status: 'assigned',
-    whatsapp_status: 'notified',
-  },
-])
+/* ---------------- Fetch real data ----------------
+   Vendor Jobs is a read-only filtered view of CommunityIssue rows that have
+   a vendor assigned — no separate backend route needed, it reuses the same
+   /api/complaints and /api/vendors endpoints SecComplaintsView.vue uses. */
+
+function capitalize(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s }
+
+// backend datetimes come back naive but are always UTC instants (no 'Z') —
+// tag them explicitly so `new Date(...)` doesn't misread them as local time
+function asUtcIso(s) {
+  if (!s) return s
+  return /[Zz]|[+-]\d\d:\d\d$/.test(s) ? s : s + 'Z'
+}
+
+function formatDateLong(iso) {
+  if (!iso) return '—'
+  return new Date(asUtcIso(iso)).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+// CommunityIssue.status has no 'assigned'/'declined' values — reconstruct
+// the 4 job states from status + vendor_whatsapp_status instead of adding
+// new columns: resolved -> completed, closed -> declined, and whatsapp
+// acceptance distinguishes "assigned" (notified, not yet started) from
+// "in_progress" (vendor accepted)
+function jobStatus(issue) {
+  if (issue.status === 'resolved') return 'completed'
+  if (issue.status === 'closed') return 'declined'
+  if (issue.vendor_whatsapp_status === 'accepted') return 'in_progress'
+  return 'assigned'
+}
+
+const vendors = ref([])
+
+async function fetchVendors() {
+  const res = await fetch(`${API}/vendors?status=`, { credentials: 'include' })
+  const data = await res.json()
+  vendors.value = data.vendors || []
+}
+
+function vendorById(id) {
+  return vendors.value.find(v => v.id === id) || null
+}
+
+const jobs = ref([])
+
+async function fetchJobs() {
+  const res = await fetch(`${API}/complaints`, { credentials: 'include' })
+  const data = await res.json()
+  jobs.value = (data.complaints || [])
+    .filter(i => i.vendor_id)
+    .map(i => {
+      const vendor = vendorById(i.vendor_id)
+      return {
+        id: i.id,
+        location: i.location || '—',
+        // the vendor's profession (plumber, electrician, ...) reads better
+        // here than the issue's problem-type category (plumbing, electrical)
+        category: vendor ? capitalize(vendor.category) : capitalize(i.category),
+        description: i.description,
+        vendor_name: vendor ? vendor.name : '—',
+        vendor_phone: vendor ? vendor.phone : '—',
+        deadline: formatDateLong(i.vendor_end_time),
+        status: jobStatus(i),
+        whatsapp_status: i.vendor_whatsapp_status || 'no_response',
+      }
+    })
+}
+
+onMounted(async () => {
+  await fetchVendors()
+  await fetchJobs()
+})
 
 const filteredJobs = computed(() => {
   return jobs.value.filter(j => {
     const matchesStatus = filterStatus.value === 'all' || j.status === filterStatus.value
-    const matchesSearch = j.id.toLowerCase().includes(searchQuery.value.toLowerCase())
-      || j.flat.toLowerCase().includes(searchQuery.value.toLowerCase())
-      || j.vendor_name.toLowerCase().includes(searchQuery.value.toLowerCase())
-      || j.description.toLowerCase().includes(searchQuery.value.toLowerCase())
+    const q = searchQuery.value.toLowerCase()
+    const matchesSearch = !q
+      || j.id.toLowerCase().includes(q)
+      || j.location.toLowerCase().includes(q)
+      || j.vendor_name.toLowerCase().includes(q)
+      || j.description.toLowerCase().includes(q)
     return matchesStatus && matchesSearch
   })
 })
@@ -177,7 +185,7 @@ function whatsappLabel(status) {
         <thead>
           <tr>
             <th>Complaint ID</th>
-            <th>Flat</th>
+            <th>Location</th>
             <th>Category</th>
             <th>Description</th>
             <th>Vendor</th>
@@ -189,9 +197,8 @@ function whatsappLabel(status) {
         <tbody>
           <tr v-for="job in filteredJobs" :key="job.id">
             <td class="job-id">{{ job.id }}</td>
-            <td>
-              <span class="flat-label">{{ job.flat }}</span>
-              <span class="block-label">{{ job.block }}</span>
+            <td class="description-cell">
+              <span class="flat-label">{{ job.location }}</span>
             </td>
             <td class="capitalize">{{ job.category }}</td>
             <td class="description-cell">{{ job.description }}</td>

@@ -9,6 +9,7 @@ export const useAuthStore = defineStore('auth', () => {
   const isLoggedIn = computed(() => user.value !== null)
   const role = computed(() => user.value?.role || null)
   const name = computed(() => user.value?.name || '')
+  const flatNumber = computed(() => user.value?.flat_number || '')
 
   async function login(email, password) {
     const response = await api.post('/auth/login', { email, password })
@@ -38,5 +39,5 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.setItem('niwaas_user', JSON.stringify(updatedUser))
   }
 
-  return { user, isLoggedIn, role, name, login, logout, restoreSession, setUser }
+  return { user, isLoggedIn, role, name, flatNumber, login, logout, restoreSession, setUser }
 })

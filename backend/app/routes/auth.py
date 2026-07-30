@@ -5,6 +5,7 @@ from app.models.user import User
 from app.models.resident import Resident
 from app.models.secretary import Secretary
 from app.models.security import Security
+from app.models.flat import Flat
 from datetime import datetime, timedelta
 import uuid
 import secrets
@@ -59,7 +60,17 @@ def ping():
 def register():
     """
     Register a new user.
-    Body: { email, password, role, name, phone, flat_id (optional) }
+
+    Body (all roles):
+        { email, password, role, name, phone }
+
+    Body (role == 'resident'), flat is resolved in one of two ways:
+        Option A — flat already exists:
+            { ...above, flat_id }
+        Option B — flat does not exist yet, create it inline:
+            { ...above, flat_number, tower, floor, unit_number }
+
+        Optional resident fields: occupant_type, household_size
     """
     data = request.get_json()
 
@@ -90,12 +101,44 @@ def register():
 
     # create role-specific profile
     if role == 'resident':
+        # resolve or create the flat before creating the resident, so a
+        # secretary can invite a resident to a brand-new flat in one step
+        flat_id = data.get('flat_id')
+
+        if not flat_id:
+            flat_number = data.get('flat_number', '').strip()
+            if not flat_number:
+                return jsonify({'error': 'flat_id or flat_number is required for a resident'}), 400
+
+            flat = Flat.query.filter_by(flat_number=flat_number).first()
+
+            if not flat:
+                tower       = data.get('tower', '').strip()
+                floor       = data.get('floor')
+                unit_number = data.get('unit_number', '').strip()
+
+                if not tower or floor is None or not unit_number:
+                    return jsonify({'error': 'tower, floor and unit_number are required to create a new flat'}), 400
+
+                flat = Flat(
+                    id=str(uuid.uuid4()),
+                    tower=tower,
+                    floor=floor,
+                    unit_number=unit_number,
+                    flat_number=flat_number,
+                    status='occupied',
+                )
+                db.session.add(flat)
+                db.session.flush()  # get flat.id before the resident references it
+
+            flat_id = flat.id
+
         profile = Resident(
             id=str(uuid.uuid4()),
             user_id=user.id,
             name=name,
             phone=phone,
-            flat_id=data.get('flat_id'),
+            flat_id=flat_id,
             occupant_type=data.get('occupant_type', 'owner'),
             household_size=data.get('household_size', 1),
             invite_code=generate_invite_code(),
@@ -182,6 +225,7 @@ def me():
     """Return current logged in user details."""
     return jsonify({'user': user_to_dict(current_user)}), 200
 
+
 @auth_bp.route('/residents', methods=['GET'])
 @login_required
 def list_residents():
@@ -191,18 +235,36 @@ def list_residents():
     from app.models.resident import Resident
     residents = Resident.query.all()
 
+    result = []
+    for r in residents:
+        # pending dues total for this resident, if the Dues model/relationship
+        # is present — kept defensive since Dues isn't guaranteed loaded here
+        pending_due = 0
+        try:
+            pending_due = sum(
+                float(d.amount_due) - float(d.amount_paid)
+                for d in r.dues
+                if float(d.amount_paid) < float(d.amount_due)
+            )
+        except Exception:
+            pending_due = None
+
+        result.append({
+            'id':              r.id,
+            'name':            r.name,
+            'phone':           r.phone,
+            'occupant_type':   r.occupant_type,
+            'household_size':  r.household_size,
+            'is_onboarded':    r.is_onboarded,
+            'invite_code':     r.invite_code,
+            'flat_id':         r.flat_id,
+            'flat_number':     r.flat.flat_number if r.flat else None,   # ADDED
+            'pending_due':     pending_due,                               # ADDED
+        })
+
     return jsonify({
-        'residents': [{
-            'id':           r.id,
-            'name':         r.name,
-            'phone':        r.phone,
-            'occupant_type':r.occupant_type,
-            'household_size':r.household_size,
-            'is_onboarded': r.is_onboarded,
-            'invite_code':  r.invite_code,
-            'flat_id':      r.flat_id,
-        } for r in residents],
-        'total': len(residents),
+        'residents': result,
+        'total': len(result),
     }), 200
 
 

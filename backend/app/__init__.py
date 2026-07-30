@@ -31,15 +31,15 @@ def create_app():
     from app.routes.vendors import vendors_bp
     flask_app.register_blueprint(vendors_bp, url_prefix='/api/vendors')
 
-    #from app.routes.notices import notices_bp
-    #flask_app.register_blueprint(notices_bp, url_prefix='/api/notices')
+    from app.routes.notices import notices_bp
+    flask_app.register_blueprint(notices_bp, url_prefix='/api/notices')
    
 
     # from app.routes.dues import dues_bp
     # flask_app.register_blueprint(dues_bp, url_prefix='/api/dues')
 
-    # from app.routes.emergency import emergency_bp
-    # flask_app.register_blueprint(emergency_bp, url_prefix='/api/emergency')
+    from app.routes.emergency import emergency_bp
+    flask_app.register_blueprint(emergency_bp, url_prefix='/api/emergency')
 
     from app.routes.visitors import visitors_bp
     flask_app.register_blueprint(visitors_bp, url_prefix='/api/visitors')
@@ -67,6 +67,9 @@ def create_app():
 
     # from app.routes.funds import funds_bp
     # flask_app.register_blueprint(funds_bp, url_prefix='/api/funds')
+
+    from app.routes.flats import flats_bp
+    flask_app.register_blueprint(flats_bp, url_prefix='/api/flats')
 
     # ── Swagger / OpenAPI docs ──────────────────────────────────
     @flask_app.route(SWAGGER_SPEC_URL)

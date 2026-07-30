@@ -1,21 +1,67 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
+import api from '../../api/axios'
 
-const emgType    = ref('Public')
-const emgMsg     = ref('')
-const showConfirm = ref(false)
-const formError  = ref('')
+const emgType        = ref('Public')
+const emgMsg         = ref('')
+const showConfirm    = ref(false)
+const formError      = ref('')
+const sending        = ref(false)
+const historyLoading = ref(true)
 
 const typeOptions = [
   { value: 'Public',  label: 'Public',  sub: 'Notify everyone'              },
   { value: 'Private', label: 'Private', sub: 'Secretary + security only'    },
 ]
 
-// mock alert history - replace with API in Sprint 1
-const alertHistory = ref([
-  { type: 'Public',  msg: 'Fire drill scheduled at 4 PM today. Please cooperate with the marshals.', time: '28 Jun, 3:00 PM', by: 'Secretary' },
-  { type: 'Private', msg: 'Suspicious person loitering near B-wing gate. Security to verify.',        time: '25 Jun, 9:12 PM', by: 'Security'  },
-])
+const alertHistory = ref([])
+const resolvingId  = ref(null)
+const resolveError = ref('')
+
+onMounted(fetchAlerts)
+
+async function resolveAlert(id) {
+  resolveError.value = ''
+  resolvingId.value  = id
+  try {
+    await api.patch(`/emergency/${id}/resolve`)
+    await fetchAlerts()
+  } catch (err) {
+    resolveError.value = err.response?.data?.error || 'Failed to resolve alert'
+  } finally {
+    resolvingId.value = null
+  }
+}
+
+async function fetchAlerts() {
+  historyLoading.value = true
+  try {
+    const response = await api.get('/emergency')
+    alertHistory.value = response.data.alerts.map(mapAlert)
+  } catch (err) {
+    console.error('Failed to load alert history')
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+function mapAlert(a) {
+  return {
+    id:          a.id,
+    type:        a.type,
+    msg:         a.message,
+    time:        formatTime(a.created_at),
+    by:          a.created_by_name || 'Unknown',
+    status:      a.status,
+    resolvedAt:  a.resolved_at,
+    resolvedBy:  a.resolved_by_name || 'Unknown',
+  }
+}
+
+function formatTime(iso) {
+  if (!iso) return ''
+  return new Date(iso).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })
+}
 
 function openConfirm() {
   formError.value = ''
@@ -26,15 +72,23 @@ function openConfirm() {
   showConfirm.value = true
 }
 
-function sendAlert() {
-  alertHistory.value.unshift({
-    type: emgType.value,
-    msg:  emgMsg.value,
-    time: 'Just now',
-    by:   'Secretary',
-  })
-  emgMsg.value      = ''
-  showConfirm.value = false
+async function sendAlert() {
+  formError.value = ''
+  sending.value    = true
+  try {
+    await api.post('/emergency', {
+      type:    emgType.value,
+      message: emgMsg.value,
+    })
+    emgMsg.value      = ''
+    showConfirm.value = false
+    await fetchAlerts()
+  } catch (err) {
+    formError.value    = err.response?.data?.error || 'Failed to send alert'
+    showConfirm.value  = false
+  } finally {
+    sending.value = false
+  }
 }
 
 function accentColor(type) {
@@ -87,7 +141,7 @@ function typeBadgeStyle(type) {
 
         <p v-if="formError" class="error-msg">{{ formError }}</p>
 
-        <button class="send-btn" @click="openConfirm">
+        <button class="send-btn" @click="openConfirm" :disabled="sending">
           🚨 Send emergency alert
         </button>
       </div>
@@ -106,13 +160,34 @@ function typeBadgeStyle(type) {
               <span class="history-type" :style="typeBadgeStyle(alert.type)">
                 {{ alert.type }}
               </span>
+              <span
+                class="history-status"
+                :class="alert.status === 'resolved' ? 'status-resolved' : 'status-active'"
+              >
+                {{ alert.status === 'resolved' ? 'Resolved' : 'Active' }}
+              </span>
               <span class="history-time">{{ alert.time }}</span>
             </div>
             <p class="history-msg">{{ alert.msg }}</p>
-            <span class="history-by">by {{ alert.by }}</span>
+            <div class="history-footer">
+              <span class="history-by">by {{ alert.by }}</span>
+              <span v-if="alert.status === 'resolved'" class="history-resolved">
+                Resolved {{ formatTime(alert.resolvedAt) }}
+              </span>
+              <button
+                v-else
+                class="resolve-btn"
+                :disabled="resolvingId === alert.id"
+                @click="resolveAlert(alert.id)"
+              >
+                {{ resolvingId === alert.id ? 'Resolving...' : 'Mark resolved' }}
+              </button>
+            </div>
           </div>
 
-          <div v-if="alertHistory.length === 0" class="empty-history">
+          <p v-if="resolveError" class="error-msg">{{ resolveError }}</p>
+          <div v-if="historyLoading" class="empty-history">Loading...</div>
+          <div v-else-if="alertHistory.length === 0" class="empty-history">
             No alerts sent yet
           </div>
         </div>
@@ -136,7 +211,9 @@ function typeBadgeStyle(type) {
 
         <div class="confirm-actions">
           <button class="cancel-btn" @click="showConfirm = false">Cancel</button>
-          <button class="send-confirm-btn" @click="sendAlert">Yes, send now</button>
+          <button class="send-confirm-btn" @click="sendAlert" :disabled="sending">
+            {{ sending ? 'Sending...' : 'Yes, send now' }}
+          </button>
         </div>
 
       </div>
@@ -325,6 +402,45 @@ label {
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
 }
+
+.history-status {
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: var(--radius-pill);
+}
+
+.status-active    { background: var(--color-danger-bg);  color: var(--color-danger-text);  }
+.status-resolved  { background: var(--color-success-bg); color: var(--color-success-text); }
+
+.history-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.history-resolved {
+  font-size: var(--font-size-xs);
+  color: var(--color-success-text);
+  font-weight: 600;
+}
+
+.resolve-btn {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  border: 1.5px solid var(--c-700);
+  background: transparent;
+  color: var(--c-700);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  transition: all var(--transition-fast);
+}
+
+.resolve-btn:hover:not(:disabled) { background: var(--color-bg); }
+.resolve-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .empty-history {
   text-align: center;

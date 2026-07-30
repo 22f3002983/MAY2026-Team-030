@@ -1,24 +1,14 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-
-/* ---------------------------------------------------------------
-   Community Issues — SHARED channel for common-area problems.
-   Every resident sees the same underlying issue list the secretary
-   works from (see sec Issues view), but scoped two ways:
-     - "My Issues"   -> anything this resident raised or joined,
-                        at any status (including Resolved/Rejected).
-     - "Open Issues" -> everything Open / In Progress society-wide,
-                        so residents can join instead of duplicating.
-   Resolved/Rejected issues the resident never participated in are
-   never shown to them, in either tab.
---------------------------------------------------------------- */
+import api from '../../api/axios'
+import { useAuthStore } from '../../stores/auth' // adjust path if this view lives elsewhere
 
 const router = useRouter()
+const auth = useAuthStore()
 
-const currentResident = { name: 'Ravi Kumar', flat: 'A-402' }
-
-const categoryOptions = ['Plumbing', 'Electrical', 'Cleaning', 'Carpentry', 'Security', 'Gardening', 'Other']
+// backend enums are lowercase singular; frontend displays them capitalized
+const categoryOptions = ['Plumbing', 'Electrical', 'Cleaning', 'Carpentry', 'Security', 'Gardening', 'Pest Control', 'Other']
 const priorityOptions = ['High', 'Medium', 'Low']
 const priorityRank = { High: 3, Medium: 2, Low: 1 }
 
@@ -30,81 +20,155 @@ const amenityOptions = [
 
 const DEFAULT_JOIN_DESC = 'Confirmed the same issue for me too'
 
-// Same shape/data the secretary works from — a resident is just a
-// different lens over the same issues.
-const issues = ref([
-  {
-    id: 'ISS-2039', title: 'Corridor light flickering', location: '4th floor corridor, Tower A',
-    category: 'Electrical', priority: 'Medium', status: 'Open',
-    vendor: null, scheduledStart: null, durationMinutes: null,
-    date: '27 Jun',
-    aiSummary: 'Residents report a flickering light on the 4th floor corridor landing in Tower A.',
-    reports: [
-      { resident: 'Ravi Kumar', flat: 'A-402', desc: 'Corridor light flickering on the 4th floor landing', date: '27 Jun', residentPriority: 'High' },
-    ],
-  },
-  {
-    id: 'ISS-2046', title: 'Lift lobby light flickering', location: '4th floor corridor, Tower A',
-    category: 'Electrical', priority: 'Medium', status: 'Open',
-    vendor: null, scheduledStart: null, durationMinutes: null,
-    date: '29 Jun',
-    aiSummary: 'A second, separate report of a flickering light near the 4th floor lift lobby in Tower A — likely the same fault as ISS-2039.',
-    reports: [
-      { resident: 'Meena Sharma', flat: 'A-405', desc: 'Lift lobby light on the 4th floor keeps flickering, happened twice this week', date: '29 Jun', residentPriority: 'Medium' },
-    ],
-  },
-  {
-    id: 'ISS-2050', title: 'Terrace water tank overflowing', location: 'Terrace, Tower B',
-    category: 'Plumbing', priority: 'High', status: 'Open',
-    vendor: null, scheduledStart: null, durationMinutes: null,
-    date: '30 Jun',
-    aiSummary: 'The terrace water tank in Tower B is overflowing, wasting water and posing a slip risk below.',
-    reports: [
-      { resident: 'Karan Mehta', flat: 'B-304', desc: 'Water overflowing from the terrace tank, wasting a lot of water', date: '30 Jun', residentPriority: 'High' },
-    ],
-  },
-  {
-    id: 'ISS-2028', title: 'Lift grinding noise', location: 'Lift 2, Tower A (between floors 3–5)',
-    category: 'Other', priority: 'Medium', status: 'In Progress',
-    vendor: 'OtisCare Lifts', scheduledStart: '2026-06-22T14:00', durationMinutes: 120,
-    date: '22 Jun',
-    aiSummary: 'Lift 2 in Tower A makes a grinding noise while travelling between the 3rd and 5th floors.',
-    reports: [
-      { resident: 'Sana Iqbal', flat: 'A-108', desc: 'Lift making grinding noise between floors 3 and 5', date: '22 Jun', residentPriority: 'High' },
-    ],
-  },
-  {
-    // Resolved, and this resident was never part of it — must stay hidden.
-    id: 'ISS-2031', title: 'Garbage not collected', location: 'B-wing basement',
-    category: 'Cleaning', priority: 'Low', status: 'Resolved',
-    vendor: 'Clean Society', scheduledStart: '2026-06-24T09:00', durationMinutes: 60,
-    date: '24 Jun',
-    aiSummary: 'Garbage was not collected from the B-wing basement collection point.',
-    reports: [
-      { resident: 'Meena Sharma', flat: 'B-201', desc: 'Garbage not collected from B-wing basement', date: '24 Jun', residentPriority: 'Low' },
-    ],
-  },
-])
+function toBackendCategory(c) { return c.toLowerCase().replace(' ', '_') }
+function toBackendPriority(p) { return p.toLowerCase() }
+function toFrontendCategory(c) {
+  if (!c) return c
+  if (c === 'pest_control') return 'Pest Control'
+  return c.charAt(0).toUpperCase() + c.slice(1)
+}
+function toFrontendPriority(p) { return p ? p.charAt(0).toUpperCase() + p.slice(1) : p }
+
+function formatDate(iso) {
+  if (!iso) return ''
+  return new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
+}
+
+/* ---------------- Vendors (name lookup only — resident can't assign) ---------------- */
+
+const vendors = ref([])
+
+async function fetchVendors() {
+  try {
+    const res = await api.get('/vendors', { params: { status: 'active' } })
+    vendors.value = res.data.vendors || []
+  } catch (err) {
+    console.error('Failed to load vendors', err)
+  }
+}
+
+function vendorNameById(id) {
+  return vendors.value.find(v => v.id === id)?.name || null
+}
+
+/* ---------------- Load data ---------------- */
+
+const loading = ref(true)
+const loadError = ref('')
+const issues = ref([])
+
+// maps a raw issue_to_dict (society-wide, full reporters) into the shape
+// the rest of this component already expects
+function mapSocietyIssue(i) {
+  return {
+    id: i.id,
+    title: i.title,
+    location: i.location || '—',
+    category: toFrontendCategory(i.category),
+    priority: toFrontendPriority(i.priority),
+    status: i.status === 'in_progress' ? 'In Progress' : toFrontendPriority(i.status).replace('_', ' '),
+    vendor: vendorNameById(i.vendor_id),
+    scheduledStart: i.vendor_start_time,
+    durationMinutes: (i.vendor_start_time && i.vendor_end_time)
+      ? Math.round((new Date(i.vendor_end_time) - new Date(i.vendor_start_time)) / 60000)
+      : null,
+    date: formatDate(i.created_at),
+    aiSummary: i.ai_suggested_description || i.description,
+    reports: (i.reporters || []).map(r => ({
+      resident_id: r.resident_id,
+      resident: r.resident_name || 'Resident',
+      complaint_id: r.complaint_id,
+      desc: r.description,
+      date: formatDate(r.created_at),
+      residentPriority: null,
+      feedbackRating: r.feedback_rating,
+    })),
+  }
+}
+
+// maps a resident's own flattened complaint_to_dict row (used for issues
+// this resident participated in that are resolved/closed — those don't
+// come back from the ?view=society open-issues fetch)
+function mapOwnComplaint(c) {
+  return {
+    id: c.issue_id,
+    complaintId: c.id, // this resident's own report id — needed for feedback/edit calls
+    title: c.title,
+    location: c.location || '—',
+    category: toFrontendCategory(c.category),
+    priority: toFrontendPriority(c.priority),
+    status: c.status === 'in_progress' ? 'In Progress' : c.status === 'closed' ? 'Rejected' : toFrontendPriority(c.status),
+    vendor: vendorNameById(c.vendor_id),
+    scheduledStart: c.vendor_start_time,
+    durationMinutes: (c.vendor_start_time && c.vendor_end_time)
+      ? Math.round((new Date(c.vendor_end_time) - new Date(c.vendor_start_time)) / 60000)
+      : null,
+    date: formatDate(c.created_at),
+    aiSummary: c.description,
+    feedbackRating: c.feedback_rating,
+    reports: [{
+      resident_id: c.resident_id,
+      resident: auth.name,
+      complaint_id: c.id,
+      desc: c.description,
+      date: formatDate(c.created_at),
+      residentPriority: null,
+      feedbackRating: c.feedback_rating,
+    }],
+  }
+}
+
+async function loadIssues() {
+  loading.value = true
+  loadError.value = ''
+  try {
+    const [societyRes, mineRes] = await Promise.all([
+      api.get('/complaints', { params: { view: 'society' } }),
+      api.get('/complaints'),
+    ])
+
+    const societyIssues = (societyRes.data.complaints || []).map(mapSocietyIssue)
+    const societyIds = new Set(societyIssues.map(i => i.id))
+
+    // resolved/rejected issues this resident participated in never come
+    // back from the society (open-only) fetch — add them from "mine"
+    const mineOnlyClosed = (mineRes.data.complaints || [])
+      .filter(c => !societyIds.has(c.issue_id))
+      .map(mapOwnComplaint)
+
+    issues.value = [...societyIssues, ...mineOnlyClosed]
+  } catch (err) {
+    loadError.value = err.response?.data?.error || 'Failed to load issues'
+    console.error('Failed to load issues', err)
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(async () => {
+  await fetchVendors()
+  await loadIssues()
+})
 
 function isParticipant(issue) {
-  return issue.reports.some(r => r.resident === currentResident.name && r.flat === currentResident.flat)
+  return issue.reports.some(r => r.resident_id === auth.user?.resident_id)
 }
 
 function isOwnReport(r) {
-  return r.resident === currentResident.name && r.flat === currentResident.flat
+  return r.resident_id === auth.user?.resident_id
 }
 
-const visibleIssues = computed(() => issues.value.filter(i => i.status !== 'Merged'))
+const visibleIssues = computed(() => issues.value)
 
 /* ---------------- Tabs ---------------- */
 
-const activeTab = ref('mine') // 'mine' | 'open'
+const activeTab = ref('mine')
 
 const mineIssues = computed(() => visibleIssues.value.filter(isParticipant))
 const openIssues = computed(() => visibleIssues.value.filter(i => ['Open', 'In Progress'].includes(i.status)))
 
 const mineStatusFilters = ['All', 'Open', 'In Progress', 'Resolved', 'Rejected']
-const filterStatus = ref('All')
+const filterStatus = ref('Open')
 const filterCategory = ref('all')
 const searchQuery = ref('')
 
@@ -138,7 +202,7 @@ function priorityClass(p) {
 }
 
 function categoryIcon(cat) {
-  const map = { Plumbing: '🔧', Electrical: '⚡', Cleaning: '🧹', Carpentry: '🪚', Security: '🛡️', Gardening: '🌿', Other: '📋' }
+  const map = { Plumbing: '🔧', Electrical: '⚡', Cleaning: '🧹', Carpentry: '🪚', Other: '📋' }
   return map[cat] || '📋'
 }
 
@@ -153,7 +217,6 @@ function formatSlot(iso, minutes) {
 /* ---------------- Navigate to home services ---------------- */
 
 function goToServiceRequests() {
-  // adjust this path to match your actual route for the home services request page
   router.push('/services')
 }
 
@@ -162,18 +225,19 @@ function goToServiceRequests() {
 const showDetail = ref(false)
 const selected = ref(null)
 const rating = ref(0)
+const submittingFeedback = ref(false)
 
-// editing/deleting the resident's own report within the detail modal
 const editingReportIdx = ref(null)
 const editReportText = ref('')
+const savingReport = ref(false)
 
-// joining an issue with an editable description
 const showJoinForm = ref(false)
 const joinDescription = ref('')
+const joining = ref(false)
 
 function openDetail(issue) {
   selected.value = issue
-  rating.value = 0
+  rating.value = issue.feedbackRating || 0
   editingReportIdx.value = null
   editReportText.value = ''
   showJoinForm.value = false
@@ -200,16 +264,29 @@ function cancelJoinForm() {
   joinDescription.value = ''
 }
 
-function confirmJoinFromDetail() {
+// joining works via the backend's existing find_matching_issue logic —
+// submitting a complaint with the SAME title + category as an existing
+// open/in_progress issue auto-attaches to it instead of creating a new one.
+async function confirmJoinFromDetail() {
   const issue = selected.value
   if (!issue || isParticipant(issue)) return
-  issue.reports.push({
-    resident: currentResident.name, flat: currentResident.flat,
-    desc: joinDescription.value.trim() || DEFAULT_JOIN_DESC,
-    date: 'Today', residentPriority: null,
-  })
-  showToast(`You've joined ${issue.id}`)
-  closeDetail()
+
+  joining.value = true
+  try {
+    await api.post('/complaints', {
+      title: issue.title,
+      description: joinDescription.value.trim() || DEFAULT_JOIN_DESC,
+      category: toBackendCategory(issue.category),
+      type: 'common_area',
+    })
+    showToast(`You've joined ${issue.id}`)
+    await loadIssues()
+    closeDetail()
+  } catch (err) {
+    showToast(err.response?.data?.error || 'Failed to join issue')
+  } finally {
+    joining.value = false
+  }
 }
 
 function startEditReport(idx) {
@@ -222,46 +299,73 @@ function cancelEditReport() {
   editReportText.value = ''
 }
 
-function saveEditReport(idx) {
+async function saveEditReport(idx) {
   const text = editReportText.value.trim()
   if (!text) return
-  selected.value.reports[idx].desc = text
-  selected.value.reports[idx].date = 'Today (edited)'
-  editingReportIdx.value = null
-  editReportText.value = ''
-  showToast('Your description was updated')
-}
+  const report = selected.value.reports[idx]
 
-function deleteOwnReport(idx) {
-  const issue = selected.value
-  if (!issue) return
-  const confirmed = window.confirm("Remove your description from this issue? If you're the only one reporting it, the issue itself will be removed.")
-  if (!confirmed) return
-
-  issue.reports.splice(idx, 1)
-
-  if (issue.reports.length === 0) {
-    // no one is reporting this anymore — remove the issue entirely
-    issues.value = issues.value.filter(i => i.id !== issue.id)
-    showToast('Issue removed — you were the only one reporting it')
+  savingReport.value = true
+  try {
+    await api.patch(`/complaints/${report.complaint_id}/description`, { description: text })
+    showToast('Your description was updated')
+    await loadIssues()
     closeDetail()
-  } else {
-    showToast('Your description was removed')
-    editingReportIdx.value = null
+  } catch (err) {
+    showToast(err.response?.data?.error || 'Failed to update your report')
+  } finally {
+    savingReport.value = false
   }
 }
 
-/* ---------------- Raise new issue (with AI duplicate check) ---------------- */
+async function deleteOwnReport(idx) {
+  const report = selected.value.reports[idx]
+  const confirmed = window.confirm("Remove your description from this issue? If you're the only one reporting it, the issue itself will be removed.")
+  if (!confirmed) return
+
+  savingReport.value = true
+  try {
+    const res = await api.delete(`/complaints/${report.complaint_id}`)
+    showToast(res.data.message)
+    await loadIssues()
+    closeDetail()
+  } catch (err) {
+    showToast(err.response?.data?.error || 'Failed to remove your report')
+  } finally {
+    savingReport.value = false
+  }
+}
+
+async function submitFeedback() {
+  const issue = selected.value
+  const myReport = issue?.reports.find(isOwnReport)
+  if (!issue || !myReport || rating.value < 1) return
+
+  submittingFeedback.value = true
+  try {
+    await api.patch(`/complaints/${myReport.complaint_id}/feedback`, {
+      feedback_rating: rating.value,
+    })
+    showToast('Thanks for rating this resolution')
+    await loadIssues()
+    closeDetail()
+  } catch (err) {
+    showToast(err.response?.data?.error || 'Failed to submit feedback')
+  } finally {
+    submittingFeedback.value = false
+  }
+}
+
+/* ---------------- Raise new issue (with duplicate check) ---------------- */
 
 const showRaise = ref(false)
-const raiseStep = ref('form') // 'form' | 'matches'
+const raiseStep = ref('form')
+const submittingIssue = ref(false)
 
 const newTitle = ref('')
 const newCategory = ref('Electrical')
 const newDesc = ref('')
 const newPriority = ref('Medium')
 
-// structured location — a complaint can be anywhere, not just inside a flat
 const newTower = ref('Tower A')
 const newFloor = ref('')
 const newUnit = ref('')
@@ -270,8 +374,6 @@ const newAmenity = ref(amenityOptions[0])
 
 const duplicateMatches = ref([])
 
-// builds the same kind of human-readable location string the rest
-// of the app (list, search, duplicate-check) already works with
 const newLocationString = computed(() => {
   const bits = []
   if (newIsAmenity.value) {
@@ -305,6 +407,8 @@ function closeRaise() {
 
 const canCheck = computed(() => newTitle.value.trim() && newTower.value && newDesc.value.trim())
 
+// duplicate check runs against the already-loaded open society issues —
+// no extra request needed since loadIssues() already fetched them
 function checkForDuplicates() {
   if (!canCheck.value) return
   const words = `${newTitle.value} ${newLocationString.value} ${newDesc.value}`
@@ -321,30 +425,44 @@ function checkForDuplicates() {
   raiseStep.value = 'matches'
 }
 
-function joinMatch(issue) {
-  issue.reports.push({
-    resident: currentResident.name, flat: currentResident.flat,
-    desc: newDesc.value.trim(), date: 'Today', residentPriority: newPriority.value,
-  })
-  showToast(`Joined ${issue.id} — you'll be updated as it progresses`)
-  closeRaise()
+async function joinMatch(issue) {
+  submittingIssue.value = true
+  try {
+    await api.post('/complaints', {
+      title: issue.title,
+      description: newDesc.value.trim(),
+      category: toBackendCategory(issue.category),
+      type: 'common_area',
+    })
+    showToast(`Joined ${issue.id} — you'll be updated as it progresses`)
+    await loadIssues()
+    closeRaise()
+  } catch (err) {
+    showToast(err.response?.data?.error || 'Failed to join issue')
+  } finally {
+    submittingIssue.value = false
+  }
 }
 
-function createNewIssue() {
-  const id = `ISS-${2050 + issues.value.length + 1}`
-  issues.value.unshift({
-    id, title: newTitle.value.trim(), location: newLocationString.value,
-    category: newCategory.value, priority: newPriority.value, status: 'Open',
-    vendor: null, scheduledStart: null, durationMinutes: null,
-    date: 'Today',
-    aiSummary: `Reported by ${currentResident.name}: ${newDesc.value.trim()}`,
-    reports: [{
-      resident: currentResident.name, flat: currentResident.flat,
-      desc: newDesc.value.trim(), date: 'Today', residentPriority: newPriority.value,
-    }],
-  })
-  showToast(`${id} raised — you'll be updated as it progresses`)
-  closeRaise()
+async function createNewIssue() {
+  submittingIssue.value = true
+  try {
+    await api.post('/complaints', {
+      title: newTitle.value.trim(),
+      description: newDesc.value.trim(),
+      category: toBackendCategory(newCategory.value),
+      priority: toBackendPriority(newPriority.value),
+      type: 'common_area',
+      location: newLocationString.value,
+    })
+    showToast('Issue raised — you\'ll be updated as it progresses')
+    await loadIssues()
+    closeRaise()
+  } catch (err) {
+    showToast(err.response?.data?.error || 'Failed to raise issue')
+  } finally {
+    submittingIssue.value = false
+  }
 }
 
 /* ---------------- Toast ---------------- */
@@ -413,7 +531,7 @@ function showToast(text) {
         <div class="card-summary">
           <div class="card-top">
             <span class="issue-title">{{ i.title }}</span>
-            <span v-if="isParticipant(i)" class="following-badge">Following</span>
+            <span v-if="isParticipant(i) && ['Open', 'In Progress'].includes(i.status)" class="following-badge">Following</span>
           </div>
           <p class="issue-loc">{{ i.location }} · {{ i.id }}</p>
         </div>

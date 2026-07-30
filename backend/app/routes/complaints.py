@@ -11,7 +11,7 @@ from datetime import datetime
 
 complaints_bp = Blueprint('complaints', __name__)
 
-VALID_CATEGORIES = ('plumbing', 'electrical', 'cleaning', 'carpentry', 'other')
+VALID_CATEGORIES = ('plumbing', 'electrical', 'cleaning', 'carpentry', 'security', 'gardening', 'pest_control', 'other')
 VALID_TYPES      = ('personal', 'common_area')
 VALID_STATUSES   = ('open', 'in_progress', 'resolved', 'closed')
 
@@ -41,6 +41,11 @@ def complaint_to_dict(c):
         'status':                issue.status if issue else None,
         'vendor_id':             issue.vendor_id if issue else None,
         'vendor_whatsapp_status':issue.vendor_whatsapp_status if issue else None,
+        # ADDED — resident's own view was missing schedule info that only
+        # existed in issue_to_dict (secretary's shape). Needed so a resident
+        # can see when the vendor is coming, same as the secretary does.
+        'vendor_start_time':     issue.vendor_start_time.isoformat() if issue and issue.vendor_start_time else None,
+        'vendor_end_time':       issue.vendor_end_time.isoformat() if issue and issue.vendor_end_time else None,
         'resolved_at':           issue.resolved_at.isoformat() if issue and issue.resolved_at else None,
     }
 
@@ -183,7 +188,12 @@ def create_complaint():
 
 
 # ── GET /api/complaints — list complaints ─────────────────────
-# resident sees their own report rows (joined with issue data)
+# resident sees their own report rows (joined with issue data) by default.
+# resident + ?view=society -> ADDED: all open/in_progress community issues
+# society-wide (full reporter list per issue, same shape secretary gets),
+# so a resident can browse what's already open and join instead of
+# duplicating. Read-only, no ability to see resolved/closed issues they
+# didn't participate in.
 # secretary sees all community_issues with reporter counts
 
 @complaints_bp.route('', methods=['GET'])
@@ -192,8 +202,22 @@ def list_complaints():
     status   = request.args.get('status')
     category = request.args.get('category')
     priority = request.args.get('priority')
+    view     = request.args.get('view')  # ADDED — 'society' for residents
 
     if current_user.role == 'resident':
+        # ADDED: browse open issues society-wide, not just this resident's own
+        if view == 'society':
+            query = CommunityIssue.query.filter(CommunityIssue.status.in_(['open', 'in_progress']))
+            if category:
+                query = query.filter_by(category=category)
+            if priority:
+                query = query.filter_by(priority=priority)
+            issues = query.order_by(CommunityIssue.created_at.desc()).all()
+            return jsonify({
+                'complaints': [issue_to_dict(i) for i in issues],
+                'total':      len(issues),
+            }), 200
+
         query = Complaint.query.filter_by(resident_id=current_user.resident.id)
         reports = query.order_by(Complaint.created_at.desc()).all()
 
@@ -266,13 +290,9 @@ def assign_vendor(id_):
 
     vendor = Vendor.query.get_or_404(vendor_id)
 
-    # optional — lets the secretary schedule the vendor's visit in the same
-    # call; columns already existed on CommunityIssue but were unused until now
     start_raw = data.get('vendor_start_time')
     end_raw   = data.get('vendor_end_time')
     if start_raw:
-        # JS's toISOString() emits a trailing 'Z', which Python 3.10's
-        # fromisoformat() can't parse directly
         issue.vendor_start_time = datetime.fromisoformat(start_raw.replace('Z', '+00:00'))
     if end_raw:
         issue.vendor_end_time = datetime.fromisoformat(end_raw.replace('Z', '+00:00'))
@@ -290,9 +310,6 @@ def assign_vendor(id_):
 
     db.session.commit()
 
-    # respond with whichever report row the id resolved through, so the
-    # response shape stays consistent whether called with a complaint id
-    # or an issue id
     complaint = Complaint.query.get(id_)
     result = complaint_to_dict(complaint) if complaint else issue_to_dict(issue)
 
@@ -371,6 +388,69 @@ def submit_feedback(complaint_id):
     return jsonify({
         'message':   'Feedback submitted',
         'complaint': complaint_to_dict(complaint),
+    }), 200
+
+
+# ── PATCH /api/complaints/<id>/description — resident edits their own report ──
+
+@complaints_bp.route('/<complaint_id>/description', methods=['PATCH'])
+@login_required
+def edit_complaint_description(complaint_id):
+    if current_user.role != 'resident':
+        return jsonify({'error': 'Only residents can edit their own report'}), 403
+
+    complaint = Complaint.query.get_or_404(complaint_id)
+
+    if complaint.resident_id != current_user.resident.id:
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    data = request.get_json() or {}
+    description = data.get('description', '').strip()
+
+    if not description:
+        return jsonify({'error': 'description is required'}), 400
+
+    complaint.description = description
+    db.session.commit()
+
+    return jsonify({
+        'message':   'Report updated',
+        'complaint': complaint_to_dict(complaint),
+    }), 200
+
+
+# ── DELETE /api/complaints/<id> — resident deletes their own report ──
+# If this was the only report on the parent issue, the issue itself is
+# deleted too — mirrors the cleanup the original mock UI implied
+# ("Issue removed — you were the only one reporting it").
+
+@complaints_bp.route('/<complaint_id>', methods=['DELETE'])
+@login_required
+def delete_complaint(complaint_id):
+    if current_user.role != 'resident':
+        return jsonify({'error': 'Only residents can delete their own report'}), 403
+
+    complaint = Complaint.query.get_or_404(complaint_id)
+
+    if complaint.resident_id != current_user.resident.id:
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    issue = complaint.issue
+    db.session.delete(complaint)
+    db.session.flush()
+
+    remaining = Complaint.query.filter_by(issue_id=issue.id).count() if issue else 0
+    issue_deleted = False
+
+    if issue and remaining == 0:
+        db.session.delete(issue)
+        issue_deleted = True
+
+    db.session.commit()
+
+    return jsonify({
+        'message':       'Issue removed — you were the only one reporting it' if issue_deleted else 'Your report was removed',
+        'issue_deleted': issue_deleted,
     }), 200
 
 

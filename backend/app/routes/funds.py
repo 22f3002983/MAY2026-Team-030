@@ -257,9 +257,9 @@ def create_transaction():
     ensure_default_config()
     operating_fund = get_or_create_fund('operating')
 
-    if fund_name != 'operating' and float(operating_fund.balance) > 0:
+    if fund_name != 'operating' and float(operating_fund.balance) >= amount:
         return jsonify({
-            'error': f'Operating fund still has ₹{operating_fund.balance} — debit from operating first. '
+            'error': f'Operating fund has enough balance (₹{operating_fund.balance}) to cover this ₹{amount} payment — debit from operating instead.'
                      f'Other funds become selectable once operating is empty.'
         }), 400
 

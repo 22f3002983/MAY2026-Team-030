@@ -5,15 +5,15 @@ import { ref, computed, onMounted } from 'vue'
    Vendor Management — Secretary-owned.
 --------------------------------------------------------------- */
 
-const categories = ['all', 'Plumbing', 'Electrical', 'Carpentry', 'Cleaning', 'Security', 'Gardening', 'Other']
-const statusOptions = ['active', 'inactive', 'blacklisted']
+const categories = ['all', 'plumber', 'electrician', 'carpenter', 'cleaner', 'other']
+const statusOptions = ['active', 'inactive']
 
 const searchQuery = ref('')
 const filterCategory = ref('all')
 const filterPayType = ref('all')     // 'all' | 'salaried' | 'not_salaried'
 const filterStatus = ref('all')      // 'all' | 'active' | 'inactive' | 'blacklisted'
 const showAddForm = ref(false)
-const API = 'http://127.0.0.1:5000/api'
+const API = 'http://localhost:5000/api'
 
 // mock data - replace with API call in Sprint 1
 const vendors = ref([])
@@ -56,7 +56,7 @@ const filteredVendors = computed(() => {
 const editingId = ref(null)
 
 const emptyForm = () => ({
-  name: '', phone: '', category: 'Plumbing', working_hours: '',
+  name: '', phone: '', category: 'plumber', working_hours: '',
   status: 'active', is_salaried: false, salary_amount: null,
 })
 

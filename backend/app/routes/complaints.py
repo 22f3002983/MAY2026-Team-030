@@ -6,6 +6,7 @@ from app.models.community_issue import CommunityIssue
 from app.models.resident import Resident
 from app.models.vendor import Vendor
 from app.routes.notifications import create_notification
+from app.services.ai_priority import suggest_priority
 import uuid
 from datetime import datetime
 
@@ -156,7 +157,7 @@ def create_complaint():
             category=category,
             ai_suggested_category=data.get('ai_suggested_category'),
             priority=data.get('priority', 'medium'),
-            ai_suggested_priority=data.get('ai_suggested_priority'),
+            ai_suggested_priority=suggest_priority(title, description, category),
             type=type_,
             location=data.get('location'),
             status='open',

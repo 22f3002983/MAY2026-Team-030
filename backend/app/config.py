@@ -9,3 +9,6 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SESSION_COOKIE_HTTPONLY        = True
     SESSION_COOKIE_SAMESITE        = 'Lax'
+
+    OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
+    OPENROUTER_MODEL   = os.getenv('OPENROUTER_MODEL', 'openai/gpt-oss-20b:free')

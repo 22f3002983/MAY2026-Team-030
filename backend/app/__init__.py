@@ -44,8 +44,8 @@ def create_app():
     from app.routes.visitors import visitors_bp
     flask_app.register_blueprint(visitors_bp, url_prefix='/api/visitors')
 
-    # from app.routes.amenities import amenities_bp
-    # flask_app.register_blueprint(amenities_bp, url_prefix='/api/amenities')
+    from app.routes.amenities import amenities_bp
+    flask_app.register_blueprint(amenities_bp, url_prefix='/api/amenities')
 
     from app.routes.summary import summary_bp
     flask_app.register_blueprint(summary_bp, url_prefix='/api/summary')

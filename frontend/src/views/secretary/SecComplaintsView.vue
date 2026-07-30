@@ -177,11 +177,15 @@ const unassignedCount = computed(() => visibleIssues.value.filter(i => !i.vendor
 const sortedFiltered = computed(() => {
   const arr = [...filtered.value]
   switch (sortBy.value) {
-    case 'priority-asc':  return arr.sort((a, b) => priorityRank[a.priority] - priorityRank[b.priority])
-    case 'priority-desc': return arr.sort((a, b) => priorityRank[b.priority] - priorityRank[a.priority])
-    case 'reports-asc':   return arr.sort((a, b) => a.reports.length - b.reports.length)
-    case 'reports-desc':  return arr.sort((a, b) => b.reports.length - a.reports.length)
-    default:              return arr
+    case 'priority-asc':     return arr.sort((a, b) => priorityRank[a.priority] - priorityRank[b.priority])
+    case 'priority-desc':    return arr.sort((a, b) => priorityRank[b.priority] - priorityRank[a.priority])
+    // AI-assessed urgency, independent of the priority the resident picked —
+    // this is what actually catches under-reported urgency (see aiPriority)
+    case 'ai-priority-desc': return arr.sort((a, b) => priorityRank[b.aiPriority] - priorityRank[a.aiPriority])
+    case 'ai-priority-asc':  return arr.sort((a, b) => priorityRank[a.aiPriority] - priorityRank[b.aiPriority])
+    case 'reports-asc':      return arr.sort((a, b) => a.reports.length - b.reports.length)
+    case 'reports-desc':     return arr.sort((a, b) => b.reports.length - a.reports.length)
+    default:                 return arr
   }
 })
 
@@ -474,6 +478,8 @@ function statusClass(s) {
           <select v-model="sortBy" class="filter-select">
             <option value="priority-desc">Priority: High → Low</option>
             <option value="priority-asc">Priority: Low → High</option>
+            <option value="ai-priority-desc">AI Priority: High → Low</option>
+            <option value="ai-priority-asc">AI Priority: Low → High</option>
             <option value="reports-asc">Reports: Fewest first</option>
             <option value="reports-desc">Reports: Most first</option>
           </select>
@@ -505,7 +511,16 @@ function statusClass(s) {
 
             <td><span class="category-badge">{{ i.category }}</span></td>
 
-            <td><span :class="['priority-badge', priorityClass(i.priority)]">{{ i.priority }}</span></td>
+            <td>
+              <span :class="['priority-badge', priorityClass(i.priority)]">{{ i.priority }}</span>
+              <span
+                v-if="i.aiPriority"
+                :class="['ai-priority-badge', { 'ai-disagrees': i.aiPriority !== i.priority }]"
+                :title="i.aiPriority !== i.priority ? `AI thinks this is ${i.aiPriority} priority — differs from the set priority` : 'AI agrees with the set priority'"
+              >
+                ✨ AI: {{ i.aiPriority }}
+              </span>
+            </td>
 
             <td><span :class="['status-badge', statusClass(i.status)]">{{ i.status }}</span></td>
 
@@ -869,6 +884,19 @@ function statusClass(s) {
 .pri-high   { background: var(--color-danger-bg);  color: var(--color-danger-text);  }
 .pri-medium { background: var(--color-warning-bg); color: var(--color-warning-text); }
 .pri-low    { background: var(--color-success-bg); color: var(--color-success-text); }
+
+.ai-priority-badge {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #6B3FA0;
+  white-space: nowrap;
+}
+
+.ai-priority-badge.ai-disagrees {
+  color: var(--color-danger-text);
+}
 
 .status-open     { background: var(--color-info-bg);    color: var(--color-info-text);    }
 .status-progress { background: var(--color-warning-bg); color: var(--color-warning-text); }

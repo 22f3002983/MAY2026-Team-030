@@ -263,9 +263,30 @@ function formatTime(iso) {
   box-shadow: 0 12px 30px rgba(196,61,61,0.35);
   animation: pulse 2s infinite;
   transition: opacity var(--transition-fast);
+  position: relative; /* needed so the pulse rings below can wrap around it */
 }
 
 .sos-btn:hover { opacity: 0.9; }
+
+.sos-btn::before,
+.sos-btn::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid rgba(196, 61, 61, 0.6);
+  animation: sos-ring 2s ease-out infinite;
+  pointer-events: none;
+}
+
+.sos-btn::after {
+  animation-delay: 1s;
+}
+
+@keyframes sos-ring {
+  0%   { transform: scale(1);   opacity: 0.7; }
+  100% { transform: scale(1.6); opacity: 0;   }
+}
 
 @keyframes pulse {
   0%   { box-shadow: 0 12px 30px rgba(196,61,61,0.35); }

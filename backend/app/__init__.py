@@ -62,8 +62,8 @@ def create_app():
     from app.routes.notifications import notifications_bp
     flask_app.register_blueprint(notifications_bp, url_prefix='/api/notifications')
 
-    # from app.routes.service_requests import service_requests_bp
-    # flask_app.register_blueprint(service_requests_bp, url_prefix='/api/service-requests')
+    from app.routes.service_requests import service_requests_bp
+    flask_app.register_blueprint(service_requests_bp, url_prefix='/api/service-requests')
 
     # from app.routes.electricity_bills import electricity_bills_bp
     # flask_app.register_blueprint(electricity_bills_bp, url_prefix='/api/electricity-bills')

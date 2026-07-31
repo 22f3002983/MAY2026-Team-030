@@ -1,18 +1,19 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
-
-const API = 'http://localhost:5000/api'
+import api from '../../api/axios' // adjust path if this view lives elsewhere
 
 /* ---------------- Filters ---------------- */
 
-const filterStatus   = ref('All')
+const filterStatus   = ref('Open')
 const filterCategory = ref('all')
 const filterPriority = ref('all')
 const sortBy         = ref('priority-desc')
 const searchQuery    = ref('')
 
 const statusFilters   = ['All', 'Open', 'In Progress', 'Resolved', 'Rejected']
-const categoryOptions = ['all', 'Plumbing', 'Electrical', 'Cleaning', 'Carpentry', 'Other']
+// ADDED: Security, Gardening, Pest Control — matches the expanded
+// CommunityIssue.category enum
+const categoryOptions = ['all', 'Plumbing', 'Electrical', 'Cleaning', 'Carpentry', 'Security', 'Gardening', 'Pest Control', 'Other']
 const priorityOptions = ['all', 'High', 'Medium', 'Low']
 const priorityRank    = { High: 3, Medium: 2, Low: 1 }
 
@@ -26,13 +27,24 @@ const durationOptions = [
 
 /* ---------------- Backend <-> UI mapping ----------------
    Issue category/priority are just cased differently from the backend
-   ('plumbing' -> 'Plumbing'). Status needs an explicit map because the
-   backend has no 'rejected' value — we repurpose 'closed' for it, since
-   CommunityIssue.status only has open/in_progress/resolved/closed. */
+   ('plumbing' -> 'Plumbing'). 'pest_control' needs its own case since it's
+   two words. Status needs an explicit map because the backend has no
+   'rejected' value — we repurpose 'closed' for it, since CommunityIssue
+   .status only has open/in_progress/resolved/closed. */
 
 const STATUS_TO_FRONTEND = { open: 'Open', in_progress: 'In Progress', resolved: 'Resolved', closed: 'Rejected' }
 
-function capitalize(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s }
+function capitalize(s) {
+  if (!s) return s
+  if (s === 'pest_control') return 'Pest Control'
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+// reverse of capitalize — used when sending filters/category back to the API
+function toBackendCategory(c) {
+  if (!c) return c
+  return c.toLowerCase().replace(' ', '_')
+}
 
 function formatDate(iso) {
   if (!iso) return ''
@@ -52,7 +64,8 @@ function asUtcIso(s) {
 // needs this explicit mapping to find who's actually suited to the job
 const ISSUE_TO_VENDOR_CATEGORY = {
   Plumbing: 'plumber', Electrical: 'electrician', Carpentry: 'carpenter',
-  Cleaning: 'cleaner', Other: 'other',
+  Cleaning: 'cleaner', Security: 'security', Gardening: 'gardener',
+  'Pest Control': 'pest_control', Other: 'other',
 }
 
 /* ---------------- Vendors ---------------- */
@@ -61,15 +74,18 @@ const ISSUE_TO_VENDOR_CATEGORY = {
 const vendors = ref([])
 
 async function fetchVendors() {
-  const res = await fetch(`${API}/vendors?status=active`, { credentials: 'include' })
-  const data = await res.json()
-  vendors.value = (data.vendors || []).map(v => ({
-    id: v.id,
-    name: v.name,
-    category: v.category,
-    engagementType: v.is_salaried ? 'salaried' : 'per_job',
-    salary: v.salary,
-  }))
+  try {
+    const res = await api.get('/vendors', { params: { status: 'active' } })
+    vendors.value = (res.data.vendors || []).map(v => ({
+      id: v.id,
+      name: v.name,
+      category: v.category,
+      engagementType: v.is_salaried ? 'salaried' : 'per_job',
+      salary: v.salary,
+    }))
+  } catch (err) {
+    console.error('Failed to load vendors', err)
+  }
 }
 
 function vendorByName(name) {
@@ -82,6 +98,9 @@ const estimatedMinutesByCategory = {
   Electrical: 45,
   Carpentry: 90,
   Cleaning: 45,
+  Security: 30,
+  Gardening: 60,
+  'Pest Control': 60,
   Other: 90,
 }
 
@@ -90,11 +109,34 @@ const estimatedMinutesByCategory = {
 const residentFlats = ref({})
 
 async function fetchResidentFlats() {
-  const res = await fetch(`${API}/auth/residents`, { credentials: 'include' })
-  const data = await res.json()
-  const map = {}
-  for (const r of (data.residents || [])) map[r.id] = r.flat_number || '—'
-  residentFlats.value = map
+  try {
+    const res = await api.get('/auth/residents')
+    const map = {}
+    for (const r of (res.data.residents || [])) map[r.id] = r.flat_number || '—'
+    residentFlats.value = map
+  } catch (err) {
+    console.error('Failed to load resident flats', err)
+  }
+}
+
+/* ---------------- Funds (paying non-salaried vendors on completion) ----------------
+   Same "Operating first, unlock other funds only if Operating can't cover
+   it" logic as the Society Funds page's manual transaction form. */
+
+const funds = ref([])
+
+async function fetchFunds() {
+  try {
+    const res = await api.get('/funds')
+    funds.value = res.data.funds || []
+  } catch (err) {
+    console.error('Failed to load funds', err)
+  }
+}
+
+function fundLabel(name) {
+  const map = { operating: 'Operating Fund', sinking: 'Sinking Fund', contingency: 'Contingency Fund' }
+  return map[name] || name
 }
 
 /* ---------------- Issues (community / common-area only) ---------------- */
@@ -105,10 +147,12 @@ async function fetchResidentFlats() {
 
 // CommunityIssue has no payment or rejection-reason columns yet, so both are
 // kept client-side only, keyed by issue id — they reset on page reload.
-const localPayments     = ref({}) // issueId -> { status, amount }
+const localPayments     = ref({}) // issueId -> { status, amount, fund }
 const rejectionReasons  = ref({}) // issueId -> reason text
 
 const issues = ref([])
+const loading = ref(true)
+const loadError = ref('')
 
 function mapIssue(i) {
   const vendorObj = vendors.value.find(v => v.id === i.vendor_id)
@@ -129,6 +173,7 @@ function mapIssue(i) {
       : null,
     paymentStatus: payment?.status ?? null,
     paymentAmount: payment?.amount ?? null,
+    paymentFund: payment?.fund ?? null,
     date: formatDate(i.created_at),
     aiSummary: i.ai_suggested_description || i.description,
     rejectionReason: rejectionReasons.value[i.id] || null,
@@ -143,23 +188,39 @@ function mapIssue(i) {
 }
 
 async function fetchIssues() {
-  const res = await fetch(`${API}/complaints`, { credentials: 'include' })
-  const data = await res.json()
-  issues.value = (data.complaints || []).map(mapIssue)
+  loading.value = true
+  loadError.value = ''
+  try {
+    const res = await api.get('/complaints')
+    issues.value = (res.data.complaints || []).map(mapIssue)
+  } catch (err) {
+    loadError.value = err.response?.data?.error || 'Failed to load issues'
+    console.error('Failed to load issues', err)
+  } finally {
+    loading.value = false
+  }
 }
 
 onMounted(async () => {
   await fetchVendors()
   await fetchResidentFlats()
+  await fetchFunds()
   await fetchIssues()
 })
 
+// FIX: this computed was missing entirely — filtered/openCount/unassignedCount/
+// mergeableIssues all depend on it, causing a ReferenceError and blank screen.
 const visibleIssues = computed(() => issues.value.filter(i => i.status !== 'Merged'))
 
 const filtered = computed(() => {
   const q = searchQuery.value.toLowerCase()
   return visibleIssues.value.filter(i => {
-    const matchesStatus   = filterStatus.value === 'All' || i.status === filterStatus.value
+    // "Open" pill also includes "In Progress" — secretary wants to see
+    // everything still active, not just brand-new unassigned issues.
+    const matchesStatus = filterStatus.value === 'All'
+      || (filterStatus.value === 'Open'
+            ? ['Open', 'In Progress'].includes(i.status)
+            : i.status === filterStatus.value)
     const matchesCategory = filterCategory.value === 'all' || i.category === filterCategory.value
     const matchesPriority = filterPriority.value === 'all' || i.priority === filterPriority.value
     const matchesSearch   = !q
@@ -171,7 +232,7 @@ const filtered = computed(() => {
   })
 })
 
-const openCount       = computed(() => visibleIssues.value.filter(i => i.status === 'Open').length)
+const openCount       = computed(() => visibleIssues.value.filter(i => ['Open', 'In Progress'].includes(i.status)).length)
 const unassignedCount = computed(() => visibleIssues.value.filter(i => !i.vendor && i.status !== 'Resolved').length)
 
 const sortedFiltered = computed(() => {
@@ -200,6 +261,7 @@ const detailDate     = ref('')
 const detailTime     = ref('')
 const detailDuration = ref(60)
 const completePaymentAmount = ref('')
+const completeFundName      = ref('operating')
 const mergeTarget    = ref('')
 const lastAiNote      = ref('')
 const rejectReason    = ref('')
@@ -231,6 +293,7 @@ function openDetail(issue) {
   }
   detailDuration.value = issue.durationMinutes || 60
   completePaymentAmount.value = ''
+  completeFundName.value = 'operating'
   mergeTarget.value = ''
   lastAiNote.value = ''
   rejectReason.value = ''
@@ -244,7 +307,7 @@ function closeDetail() {
 
 // If the category changes, drop a vendor that no longer matches it
 watch(detailCategory, () => {
-  if (detailVendor.value && vendorByName(detailVendor.value)?.category !== detailCategory.value) {
+  if (detailVendor.value && vendorByName(detailVendor.value)?.category !== ISSUE_TO_VENDOR_CATEGORY[detailCategory.value]) {
     detailVendor.value = ''
   }
 })
@@ -306,25 +369,18 @@ async function confirmAssign() {
   const wasUnassigned = !issue.vendor
   const { start, end } = proposedSlot.value
 
-  const res = await fetch(`${API}/complaints/${issue.id}/assign`, {
-    method: 'PATCH', credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
+  try {
+    await api.patch(`/complaints/${issue.id}/assign`, {
       vendor_id:         vendorObj.id,
       vendor_start_time: start.toISOString(),
       vendor_end_time:   end.toISOString(),
-    }),
-  })
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    showToast(err.error || 'Failed to assign vendor')
-    return
+    })
+    await fetchIssues()
+    showToast(wasUnassigned ? `${issue.title} — vendor assigned` : `${issue.title} — schedule changed`)
+    closeDetail()
+  } catch (err) {
+    showToast(err.response?.data?.error || 'Failed to assign vendor')
   }
-
-  await fetchIssues()
-  showToast(wasUnassigned ? `${issue.title} — vendor assigned` : `${issue.title} — schedule changed`)
-  closeDetail()
 }
 
 /* ---------------- Complete / payment ---------------- */
@@ -332,33 +388,72 @@ async function confirmAssign() {
 const completingVendor = computed(() => vendorByName(selected.value?.vendor))
 const needsPayment      = computed(() => completingVendor.value?.engagementType === 'per_job')
 
+// Operating is the default source. Other funds unlock only if Operating's
+// balance can't cover the amount currently being entered — mirrors the
+// Society Funds page's debit-fund logic exactly.
+const completeFundOptions = computed(() => {
+  const operating = funds.value.find(f => f.fund_name === 'operating')
+  const amount = Number(completePaymentAmount.value) || 0
+  const operatingInsufficient = !operating || operating.balance < amount
+  return operatingInsufficient
+  ? [...funds.value].sort((a, b) => (a.fund_name === 'operating' ? -1 : b.fund_name === 'operating' ? 1 : 0))
+  : funds.value.filter(f => f.fund_name === 'operating')
+})
+
+// Keep the selected fund valid if the available options change (e.g. user
+// picked a non-Operating fund, then lowered the amount so Operating becomes
+// sufficient again).
+watch(completeFundOptions, (options) => {
+  if (needsPayment.value && !options.some(f => f.fund_name === completeFundName.value)) {
+    completeFundName.value = options[0]?.fund_name || ''
+  }
+})
+const selectedFundInsufficient = computed(() => {
+  if (!needsPayment.value || !completeFundName.value) return null
+  const fund = funds.value.find(f => f.fund_name === completeFundName.value)
+  const amount = Number(completePaymentAmount.value) || 0
+  if (!fund || amount <= 0) return null
+  return fund.balance < amount
+    ? { balance: fund.balance, short: amount - fund.balance }
+    : null
+})
+
 async function confirmComplete() {
-  if (needsPayment.value && !completePaymentAmount.value) return
+  if (needsPayment.value && (!completePaymentAmount.value || !completeFundName.value)) return
   const issue = selected.value
 
-  const res = await fetch(`${API}/complaints/${issue.id}/status`, {
-    method: 'PATCH', credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ status: 'resolved' }),
-  })
+  try {
+    if (needsPayment.value) {
+      // debit the chosen fund before closing the issue, same endpoint the
+      // Society Funds page uses for manual transactions
+      await api.post('/funds/transactions', {
+        type: 'debit',
+        fund_name: completeFundName.value,
+        amount: Number(completePaymentAmount.value),
+        description: `Vendor payment — ${completingVendor.value?.name} — ${issue.title} (${issue.id})`,
+      })
+    }
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    showToast(err.error || 'Failed to close issue')
-    return
+    await api.patch(`/complaints/${issue.id}/status`, { status: 'resolved' })
+
+    // no payment column on CommunityIssue yet — remembered client-side only
+    localPayments.value = {
+      ...localPayments.value,
+      [issue.id]: needsPayment.value
+        ? { status: 'paid', amount: Number(completePaymentAmount.value), fund: completeFundName.value }
+        : { status: 'not_applicable', amount: null, fund: null },
+    }
+
+    await fetchIssues()
+    if (needsPayment.value) await fetchFunds() // balances just changed
+    showToast(
+      `${issue.title} — closed` +
+      (needsPayment.value ? ` and ₹${completePaymentAmount.value} paid from ${fundLabel(completeFundName.value)}` : '')
+    )
+    closeDetail()
+  } catch (err) {
+    showToast(err.response?.data?.error || 'Failed to close issue')
   }
-
-  // no payment column on CommunityIssue yet — remembered client-side only
-  localPayments.value = {
-    ...localPayments.value,
-    [issue.id]: needsPayment.value
-      ? { status: 'paid', amount: Number(completePaymentAmount.value) }
-      : { status: 'not_applicable', amount: null },
-  }
-
-  await fetchIssues()
-  showToast(`${issue.title} — closed${needsPayment.value ? ' and payment recorded' : ''}`)
-  closeDetail()
 }
 
 /* ---------------- Merge ---------------- */
@@ -373,21 +468,14 @@ async function confirmMerge() {
   const current = selected.value
   if (!target || !current) return
 
-  const res = await fetch(`${API}/complaints/${target.id}/merge`, {
-    method: 'POST', credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ other_issue_id: current.id }),
-  })
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    showToast(err.error || 'Failed to merge issues')
-    return
+  try {
+    await api.post(`/complaints/${target.id}/merge`, { other_issue_id: current.id })
+    await fetchIssues()
+    showToast(`${current.title} merged into ${target.title}`)
+    closeDetail()
+  } catch (err) {
+    showToast(err.response?.data?.error || 'Failed to merge issues')
   }
-
-  await fetchIssues()
-  showToast(`${current.title} merged into ${target.title}`)
-  closeDetail()
 }
 
 /* ---------------- Reject ---------------- */
@@ -396,27 +484,21 @@ async function confirmReject() {
   if (!rejectReason.value.trim()) return
   const issue = selected.value
 
-  // backend has no dedicated 'rejected' status — 'closed' is the closest
-  // terminal state that isn't 'resolved', so we repurpose it and label it
-  // "Rejected" in the UI (see STATUS_TO_FRONTEND)
-  const res = await fetch(`${API}/complaints/${issue.id}/status`, {
-    method: 'PATCH', credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ status: 'closed' }),
-  })
+  try {
+    // backend has no dedicated 'rejected' status — 'closed' is the closest
+    // terminal state that isn't 'resolved', so we repurpose it and label it
+    // "Rejected" in the UI (see STATUS_TO_FRONTEND)
+    await api.patch(`/complaints/${issue.id}/status`, { status: 'closed' })
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    showToast(err.error || 'Failed to reject issue')
-    return
+    // no rejection-reason column on CommunityIssue yet — remembered client-side only
+    rejectionReasons.value = { ...rejectionReasons.value, [issue.id]: rejectReason.value.trim() }
+
+    await fetchIssues()
+    showToast(`${issue.title} rejected`)
+    closeDetail()
+  } catch (err) {
+    showToast(err.response?.data?.error || 'Failed to reject issue')
   }
-
-  // no rejection-reason column on CommunityIssue yet — remembered client-side only
-  rejectionReasons.value = { ...rejectionReasons.value, [issue.id]: rejectReason.value.trim() }
-
-  await fetchIssues()
-  showToast(`${issue.title} rejected`)
-  closeDetail()
 }
 
 /* ---------------- Badge helpers ---------------- */
@@ -593,7 +675,7 @@ function statusClass(s) {
             <div class="merge-row">
               <select v-model="mergeTarget" class="n-input">
                 <option value="">Select an issue to merge into...</option>
-                <option v-for="m in mergeableIssues" :key="m.id" :value="m.id">{{ m.id }} — {{ m.title }}</option>
+                <option v-for="m in mergeableIssues" :key="m.id" :value="m.id">{{ m.title }} - {{ m.id }} </option>
               </select>
               <button class="btn-outline" :disabled="!mergeTarget" @click="confirmMerge">Merge</button>
             </div>
@@ -658,6 +740,15 @@ function statusClass(s) {
             <template v-if="needsPayment">
               <label>Payment amount (₹)</label>
               <input type="number" v-model="completePaymentAmount" class="n-input" placeholder="e.g. 800" min="0" />
+
+              <label>Pay from</label>
+              <select v-model="completeFundName" class="n-input">
+                <option v-for="f in completeFundOptions" :key="f.fund_name" :value="f.fund_name">{{ fundLabel(f.fund_name) }}</option>
+              </select>
+              <p v-if="selectedFundInsufficient" class="helper-text" style="color: var(--color-danger-text);">
+                {{ fundLabel(completeFundName) }} only has ₹{{ selectedFundInsufficient.balance }} — ₹{{ selectedFundInsufficient.short }} short of ₹{{ completePaymentAmount }}. You can still proceed, or pick a different fund.
+              </p>
+
               <p class="helper-text">{{ completingVendor?.name }} is a per-job vendor — record what was paid before closing.</p>
             </template>
             <template v-else>
@@ -666,7 +757,7 @@ function statusClass(s) {
 
             <button
               class="btn-primary btn-complete"
-              :disabled="needsPayment && !completePaymentAmount"
+              :disabled="needsPayment && (!completePaymentAmount || !completeFundName)"
               @click="confirmComplete"
             >
               {{ needsPayment ? 'Record Payment & Close' : 'Close Issue' }}
@@ -679,7 +770,9 @@ function statusClass(s) {
             <div class="resolved-card">
               <span class="vendor-name">{{ selected?.vendor }}</span>
               <span class="slot-text">{{ formatSlot(selected?.scheduledStart, selected?.durationMinutes) }}</span>
-              <span v-if="selected?.paymentStatus === 'paid'" class="pay-text pay-paid">Paid ₹{{ selected?.paymentAmount }}</span>
+              <span v-if="selected?.paymentStatus === 'paid'" class="pay-text pay-paid">
+                Paid ₹{{ selected?.paymentAmount }}{{ selected?.paymentFund ? ` from ${fundLabel(selected.paymentFund)}` : '' }}
+              </span>
               <span v-else class="pay-text">No payment applicable</span>
             </div>
           </div>

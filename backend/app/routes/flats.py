@@ -1,5 +1,6 @@
 from flask import Blueprint, jsonify
 from flask_login import login_required, current_user
+from app.extensions import db
 from app.models.flat import Flat
 
 flats_bp = Blueprint('flats', __name__)
@@ -43,3 +44,23 @@ def flat_directory():
         })
 
     return jsonify({'flats': result, 'total': len(result)}), 200
+
+
+@flats_bp.route('/blocks', methods=['GET'])
+@login_required
+def list_blocks():
+    """Unique tower/block values from the flats table, used to populate
+    the notice 'relevance' options so stored values always match what
+    residents are filtered against (resident.flat.tower)."""
+    if current_user.role not in ('secretary', 'security'):
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    rows = (
+        db.session.query(Flat.tower)
+        .distinct()
+        .order_by(Flat.tower)
+        .all()
+    )
+    blocks = [r[0] for r in rows if r[0]]
+
+    return jsonify({'blocks': blocks}), 200

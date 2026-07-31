@@ -7,6 +7,9 @@ from app.models.resident import Resident
 from app.models.vendor import Vendor
 from app.routes.notifications import create_notification
 from app.services.ai_priority import suggest_priority
+from app.services.ai_category import suggest_category
+from app.services.ai_summary import suggest_summary
+from app.services.ai_duplicate import find_semantic_duplicates
 import uuid
 from datetime import datetime
 
@@ -124,6 +127,47 @@ def notify_reporters(issue, message, notif_type):
             create_notification(user_id=report.resident.user_id, message=message, type=notif_type)
 
 
+# ── POST /api/complaints/check-duplicates — pre-submit AI duplicate check ──
+# Resident-triggered (a button, not as-you-type) before raising a new issue.
+# Returns just the matching issue ids — the frontend already has the full,
+# correctly-shaped issue objects loaded for the "Open in Society" tab, so
+# there's no need to duplicate that shape here.
+
+@complaints_bp.route('/check-duplicates', methods=['POST'])
+@login_required
+def check_duplicates():
+    if current_user.role != 'resident':
+        return jsonify({'error': 'Only residents can check for duplicates'}), 403
+
+    data = request.get_json() or {}
+    title       = data.get('title', '').strip()
+    description = data.get('description', '').strip()
+    category    = data.get('category', '')
+
+    if not title or not description or category not in VALID_CATEGORIES:
+        return jsonify({'error': 'title, description and a valid category are required'}), 400
+
+    candidates = CommunityIssue.query.filter(
+        CommunityIssue.category == category,
+        CommunityIssue.status.in_(['open', 'in_progress']),
+    ).order_by(CommunityIssue.created_at.desc()).limit(15).all()
+
+    # skip issues this resident is already part of — they don't need an AI
+    # suggestion to "join" something they already know about
+    resident_id = current_user.resident.id
+    candidates = [
+        i for i in candidates
+        if not Complaint.query.filter_by(issue_id=i.id, resident_id=resident_id).first()
+    ]
+
+    matched_ids = find_semantic_duplicates(
+        title, description,
+        [{'id': i.id, 'title': i.title, 'description': i.description} for i in candidates],
+    )
+
+    return jsonify({'matches': matched_ids}), 200
+
+
 # ── POST /api/complaints — raise a complaint (resident only) ──
 
 @complaints_bp.route('', methods=['POST'])
@@ -158,9 +202,8 @@ def create_complaint():
             id=str(uuid.uuid4()),
             title=title,
             description=description,
-            ai_suggested_description=data.get('ai_suggested_description'),
             category=category,
-            ai_suggested_category=data.get('ai_suggested_category'),
+            ai_suggested_category=suggest_category(f'{title}. {description}', VALID_CATEGORIES),
             priority=data.get('priority', 'medium'),
             ai_suggested_priority=suggest_priority(title, description, category),
             type=type_,
@@ -178,6 +221,14 @@ def create_complaint():
         description=description,
     )
     db.session.add(complaint)
+    db.session.flush()  # include this report when gathering descriptions below
+
+    # merges every report on this issue (not just the newest) into one
+    # secretary-facing summary — most valuable once a second resident joins
+    # an existing issue with their own wording
+    all_descriptions = [c.description for c in Complaint.query.filter_by(issue_id=issue.id).all()]
+    issue.ai_suggested_description = suggest_summary(issue.title, issue.category, all_descriptions)
+
     db.session.commit()
 
     message = 'Complaint raised successfully' if is_new_issue else 'Added your report to an existing open issue'

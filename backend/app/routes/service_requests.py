@@ -3,6 +3,7 @@ from flask_login import login_required, current_user
 from app.extensions import db
 from app.models.service_request import ServiceRequest
 from app.models.vendor import Vendor
+from app.services.ai_category import suggest_category
 import uuid
 from datetime import datetime
 
@@ -57,6 +58,23 @@ def _parse_date_time(data, errors):
         except (ValueError, TypeError):
             errors.append('scheduled_time must be HH:MM')
     return scheduled_date, scheduled_time
+
+
+# ── POST /api/service-requests/suggest-category — live AI hint ─
+# Called as the resident types a description, before submitting — doesn't
+# persist anything, just returns a best-guess category for the UI to offer.
+
+@service_requests_bp.route('/suggest-category', methods=['POST'])
+@login_required
+def suggest_category_route():
+    data = request.get_json() or {}
+    description = data.get('description', '').strip()
+
+    if not description:
+        return jsonify({'category': None}), 200
+
+    category = suggest_category(description, VALID_CATEGORIES)
+    return jsonify({'category': category}), 200
 
 
 # ── POST /api/service-requests — book a home service ───────────

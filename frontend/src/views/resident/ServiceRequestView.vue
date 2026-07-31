@@ -178,28 +178,31 @@ const estimatedDuration = computed(() => formatMinutes(estimatedMinutesByCategor
 
 const aiSuggestedCategory = ref(null)
 const aiThinking = ref(false)
-let aiTimer = null
 
-watch(formDesc, (val) => {
-  if (!showRaise.value) return
-  if (!val.trim()) { aiSuggestedCategory.value = null; return }
-  aiThinking.value = true
-  clearTimeout(aiTimer)
-  aiTimer = setTimeout(() => {
-    const lower = val.toLowerCase()
-    if (lower.includes('water') || lower.includes('pipe') || lower.includes('tap') || lower.includes('leak'))
-      aiSuggestedCategory.value = 'Plumbing'
-    else if (lower.includes('light') || lower.includes('electric') || lower.includes('power') || lower.includes('switch') || lower.includes('spark'))
-      aiSuggestedCategory.value = 'Electrical'
-    else if (lower.includes('clean') || lower.includes('garbage') || lower.includes('dust'))
-      aiSuggestedCategory.value = 'Cleaning'
-    else if (lower.includes('door') || lower.includes('wood') || lower.includes('cabinet') || lower.includes('hinge'))
-      aiSuggestedCategory.value = 'Carpentry'
-    else
-      aiSuggestedCategory.value = null
-    aiThinking.value = false
-  }, 500)
+// a suggestion is only valid for the text it was generated from — clear it
+// (but don't re-call the AI) once the resident edits the description, so an
+// outdated badge doesn't linger from partial/earlier wording
+watch(formDesc, () => {
+  aiSuggestedCategory.value = null
 })
+
+// triggered explicitly by a button rather than as-you-type: avoids calling
+// the model on half-typed descriptions, and avoids the suggestion flickering
+// as someone pauses mid-sentence to think
+async function suggestCategory() {
+  const val = formDesc.value.trim()
+  if (!val) return
+  aiThinking.value = true
+  aiSuggestedCategory.value = null
+  try {
+    const res = await api.post('/service-requests/suggest-category', { description: val })
+    aiSuggestedCategory.value = res.data.category ? CATEGORY_TO_FRONTEND[res.data.category] : null
+  } catch (err) {
+    console.error('Failed to get AI category suggestion', err)
+  } finally {
+    aiThinking.value = false
+  }
+}
 
 function syncVendorToCategory() {
   const stillValid = vendorsForCategory(formCategory.value).some(v => v.name === formVendor.value)
@@ -475,6 +478,14 @@ async function rate(r, stars) {
                 rows="3"
                 placeholder="e.g. Kitchen tap has been leaking since this morning"
               ></textarea>
+              <button
+                type="button"
+                class="suggest-category-btn"
+                :disabled="!formDesc.trim() || aiThinking"
+                @click="suggestCategory"
+              >
+                {{ aiThinking ? '✦ Thinking...' : '✨ Suggest category' }}
+              </button>
 
               <div class="field-header">
                 <label>Category</label>
@@ -485,9 +496,6 @@ async function rate(r, stars) {
                   title="Click to apply"
                 >
                   ✦ AI suggested: {{ aiSuggestedCategory }}
-                </span>
-                <span v-else-if="aiThinking" class="ai-badge thinking">
-                  ✦ Thinking...
                 </span>
               </div>
               <select v-model="formCategory" class="n-input" @change="onCategoryChange">
@@ -533,7 +541,7 @@ async function rate(r, stars) {
               <div class="ai-panel">
                 <div class="ai-panel-title">✦ How AI helps</div>
                 <p class="ai-panel-text">
-                  As you type, Niwaas reads your description and suggests the most likely category — so your request reaches the right vendor faster, with a realistic time estimate.
+                  Once you've described the issue, tap "Suggest category" and Niwaas reads it to suggest the most likely category — so your request reaches the right vendor faster, with a realistic time estimate.
                 </p>
               </div>
 
@@ -917,7 +925,25 @@ async function rate(r, stars) {
 }
 
 .ai-badge:hover   { background: #C8DEF3; }
-.ai-badge.thinking { opacity: 0.6; cursor: default; }
+
+.suggest-category-btn {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  color: var(--c-800);
+  background: transparent;
+  border: 1.5px solid var(--color-border-soft);
+  padding: 6px 12px;
+  border-radius: var(--radius-pill);
+  margin: 8px 0 14px;
+  transition: all var(--transition-fast);
+}
+
+.suggest-category-btn:hover:not(:disabled) { border-color: var(--c-600); background: #EAF6FB; }
+.suggest-category-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 label {
   display: block;

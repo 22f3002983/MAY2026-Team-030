@@ -406,23 +406,29 @@ function closeRaise() {
 }
 
 const canCheck = computed(() => newTitle.value.trim() && newTower.value && newDesc.value.trim())
+const checkingDuplicates = ref(false)
 
-// duplicate check runs against the already-loaded open society issues —
-// no extra request needed since loadIssues() already fetched them
-function checkForDuplicates() {
+// asks the backend to compare this report against open issues in the same
+// category using the AI model — the frontend just maps the returned ids
+// back onto the already-loaded, correctly-shaped openIssues list
+async function checkForDuplicates() {
   if (!canCheck.value) return
-  const words = `${newTitle.value} ${newLocationString.value} ${newDesc.value}`
-    .toLowerCase().split(/\W+/).filter(w => w.length > 3)
-
-  duplicateMatches.value = openIssues.value
-    .filter(i => i.category === newCategory.value && !isParticipant(i))
-    .filter(i => {
-      const text = `${i.title} ${i.location} ${i.aiSummary}`.toLowerCase()
-      return words.some(w => text.includes(w))
+  checkingDuplicates.value = true
+  try {
+    const res = await api.post('/complaints/check-duplicates', {
+      title: newTitle.value.trim(),
+      description: newDesc.value.trim(),
+      category: toBackendCategory(newCategory.value),
     })
-    .slice(0, 3)
-
-  raiseStep.value = 'matches'
+    const matchedIds = res.data.matches || []
+    duplicateMatches.value = openIssues.value.filter(i => matchedIds.includes(i.id))
+  } catch (err) {
+    console.error('Failed to check for duplicates', err)
+    duplicateMatches.value = []
+  } finally {
+    checkingDuplicates.value = false
+    raiseStep.value = 'matches'
+  }
 }
 
 async function joinMatch(issue) {
@@ -739,8 +745,8 @@ function showToast(text) {
                     : 'Fill in title, description and tower to run the check' }}
                 </span>
               </div>
-              <button class="btn-ai-check" :disabled="!canCheck" @click="checkForDuplicates">
-                Check Now
+              <button class="btn-ai-check" :disabled="!canCheck || checkingDuplicates" @click="checkForDuplicates">
+                {{ checkingDuplicates ? 'Checking…' : 'Check Now' }}
               </button>
             </div>
           </template>

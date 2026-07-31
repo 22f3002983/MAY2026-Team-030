@@ -79,10 +79,6 @@ function vendorsForCategory(frontendCat) {
   return vendors.value.filter(v => v.category === backendCat)
 }
 
-function vendorById(id) {
-  return vendors.value.find(v => v.id === id) || null
-}
-
 /* ---------------- Requests ---------------- */
 
 const requests = ref([])
@@ -265,7 +261,7 @@ const canSubmit = computed(() =>
 )
 
 async function submitRequest() {
-  if (!canSubmit.value) return
+  if (!canSubmit.value || submitting.value) return
   const vendorObj = vendors.value.find(v => v.name === formVendor.value)
   if (!vendorObj) return
 
@@ -326,7 +322,7 @@ function closeComplete() {
 
 async function confirmPay() {
   const r = showComplete.value
-  if (!payAmount.value || !r) return
+  if (!payAmount.value || !r || paying.value) return
 
   paying.value = true
   try {
@@ -375,8 +371,14 @@ async function rate(r, stars) {
       </button>
     </div>
 
+    <!-- load state (ADDED — loading/loadError were tracked but never shown) -->
+    <p v-if="loadError" class="error-msg">{{ loadError }}</p>
+    <div v-if="loading" class="empty-state">
+      <p>Loading your requests...</p>
+    </div>
+
     <!-- request cards -->
-    <div class="requests-list">
+    <div v-else class="requests-list">
       <div v-for="r in filtered" :key="r.id" class="request-card">
 
         <button class="card-header" @click="toggle(r.id)">
@@ -527,8 +529,9 @@ async function rate(r, stars) {
                 </div>
               </div>
 
-              <button class="btn-primary" :disabled="!canSubmit" @click="submitRequest">
-                {{ editingId ? 'Save New Slot' : 'Book Request' }}
+              <!-- FIXED: disabled during submit + shows progress text, prevents double-submit -->
+              <button class="btn-primary" :disabled="!canSubmit || submitting" @click="submitRequest">
+                {{ submitting ? 'Saving...' : (editingId ? 'Save New Slot' : 'Book Request') }}
               </button>
             </div>
 
@@ -576,7 +579,10 @@ async function rate(r, stars) {
           <input type="number" v-model="payAmount" class="n-input" placeholder="e.g. 500" min="0" />
           <p class="helper-text">This confirms the job is done and records what you paid {{ showComplete.vendor }} directly.</p>
 
-          <button class="btn-primary" :disabled="!payAmount" @click="confirmPay">Confirm &amp; Close</button>
+          <!-- FIXED: disabled while paying, shows progress text -->
+          <button class="btn-primary" :disabled="!payAmount || paying" @click="confirmPay">
+            {{ paying ? 'Processing...' : 'Confirm & Close' }}
+          </button>
         </div>
       </div>
     </div>
@@ -651,6 +657,12 @@ async function rate(r, stars) {
 }
 
 .status-pill.active { background: var(--c-800); color: #fff; }
+
+.error-msg {
+  font-size: var(--font-size-sm);
+  color: var(--color-danger);
+  margin-bottom: 14px;
+}
 
 .requests-list {
   display: flex;

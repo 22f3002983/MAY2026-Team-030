@@ -167,6 +167,14 @@ const activeTab = ref('mine')
 const mineIssues = computed(() => visibleIssues.value.filter(isParticipant))
 const openIssues = computed(() => visibleIssues.value.filter(i => ['Open', 'In Progress'].includes(i.status)))
 
+// FIXED — the "My Issues" tab badge was showing mineIssues.length, which
+// counts every status (Open, In Progress, Resolved, Rejected). Only the
+// currently-open ones should show in the badge, same idea as the "Open in
+// Society" badge already does.
+const mineOpenCount = computed(() =>
+  mineIssues.value.filter(i => ['Open', 'In Progress'].includes(i.status)).length
+)
+
 const mineStatusFilters = ['All', 'Open', 'In Progress', 'Resolved', 'Rejected']
 const filterStatus = ref('Open')
 const filterCategory = ref('all')
@@ -496,7 +504,7 @@ function showToast(text) {
     <!-- tabs -->
     <div class="tab-group">
       <button :class="['tab', { active: activeTab === 'mine' }]" @click="activeTab = 'mine'">
-        My Issues <span class="tab-count">{{ mineIssues.length }}</span>
+        My Issues <span class="tab-count">{{ mineOpenCount }}</span>
       </button>
       <button :class="['tab', { active: activeTab === 'open' }]" @click="activeTab = 'open'">
         Open in Society <span class="tab-count">{{ openIssues.length }}</span>

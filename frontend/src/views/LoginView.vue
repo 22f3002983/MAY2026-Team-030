@@ -20,6 +20,10 @@ const roles = [
   { value: "security", label: "Security" },
 ];
 
+function roleLabel(value) {
+  return roles.find((r) => r.value === value)?.label || value;
+}
+
 async function login() {
   error.value = "";
   loading.value = true;
@@ -38,6 +42,16 @@ async function login() {
 
   try {
     const user = await auth.login(email.value, password.value, inviteCode.value || null);
+
+    // the role buttons are just a UI hint — the backend doesn't check them
+    // at all, so without this a secretary's real credentials would silently
+    // log in even with "Resident" selected. Reject the mismatch explicitly.
+    if (user.role !== selectedRole.value) {
+      await auth.logout(); // a session was already created server-side — undo it
+      error.value = `Select the correct role and try again.`;
+      loading.value = false;
+      return;
+    }
 
     if (user.role === "security") {
       router.push("/gate/dashboard");

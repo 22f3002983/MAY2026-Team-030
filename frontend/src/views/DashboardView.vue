@@ -1,11 +1,93 @@
 <script setup>
-import { computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import MetricCard from '../components/dashboard/MetricCard.vue'
+import api from '../api/axios'
 
 const router = useRouter()
 const auth = useAuthStore()
+
+// ---------------------------------------------------------------------------
+// Secretary dashboard — live data from GET /api/summary/secretary.
+// This overrides the hardcoded ROLE_CONFIG.secretary values below once it
+// loads; the hardcoded values remain as a fallback while loading / if the
+// request fails, so the dashboard never renders blank.
+// (Resident and security dashboards are untouched — still on mock data.)
+// ---------------------------------------------------------------------------
+const secretarySummary = ref(null)
+
+function formatINR(amount) {
+  const n = Number(amount) || 0
+  if (n >= 10000000) return `₹${(n / 10000000).toFixed(1)}Cr`
+  if (n >= 100000)   return `₹${(n / 100000).toFixed(1)}L`
+  if (n >= 1000)     return `₹${(n / 1000).toFixed(1)}K`
+  return `₹${Math.round(n)}`
+}
+
+function priorityLabel(priority) {
+  return { high: 'High', medium: 'Medium', low: 'Low' }[priority] || priority
+}
+
+// maps issue priority -> the feed-chip color classes already defined in
+// <style scoped> below (in_progress = amber, completed = green, high = red)
+function priorityClass(priority) {
+  return { high: 'high', medium: 'in_progress', low: 'completed' }[priority] || 'assigned'
+}
+
+async function loadSecretarySummary() {
+  try {
+    const res = await api.get('/summary/secretary')
+    secretarySummary.value = res.data
+  } catch (err) {
+    console.error('Failed to load secretary dashboard summary', err)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Resident dashboard — live data from GET /api/summary/resident.
+// Same override pattern as secretary above: hardcoded ROLE_CONFIG.resident
+// stays as a loading/error fallback.
+// ---------------------------------------------------------------------------
+const residentSummary = ref(null)
+
+function formatINRFull(amount) {
+  return `₹${Math.round(Number(amount) || 0).toLocaleString('en-IN')}`
+}
+
+// backend sends zero-padded day ("02 Jul") — strip the leading zero to match
+// the original "2 Jul" style
+function trimDay(dateStr) {
+  return dateStr ? dateStr.replace(/^0/, '') : dateStr
+}
+
+function formatShortDate(iso) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return `${d.getDate()} ${d.toLocaleString('en-IN', { month: 'short' })}`
+}
+
+function issueStatusLabel(status) {
+  return { open: 'Open', in_progress: 'In Progress', resolved: 'Resolved', closed: 'Closed' }[status] || status
+}
+
+function issueStatusClass(status) {
+  return { open: 'assigned', in_progress: 'in_progress', resolved: 'completed', closed: 'completed' }[status] || 'assigned'
+}
+
+async function loadResidentSummary() {
+  try {
+    const res = await api.get('/summary/resident')
+    residentSummary.value = res.data
+  } catch (err) {
+    console.error('Failed to load resident dashboard summary', err)
+  }
+}
+
+onMounted(() => {
+  if (auth.role === 'secretary') loadSecretarySummary()
+  if (auth.role === 'resident') loadResidentSummary()
+})
 
 /*
   Instead of writing a separate if/else check inside every computed
@@ -30,7 +112,7 @@ const ROLE_CONFIG = {
       { tag: '025', title: 'Water pressure low in tap',        meta: 'Plumbing · 12 Jun',   status: 'Resolved',    statusClass: 'completed'   },
     ],
     quickActions: [
-      { label: 'Raise a complaint',    icon: '⚠',  to: '/complaints/raise' },
+      { label: 'Raise a complaint',    icon: '⚠',  to: '/complaints' },
       { label: 'Book an amenity',      icon: '📅', to: '/amenities'        },
       { label: 'Pre-register visitor', icon: '👤', to: '/visitors'         },
     ],
@@ -88,7 +170,65 @@ const ROLE_CONFIG = {
 
 // Fall back to 'resident' config if role is missing/unknown, so the
 // dashboard never renders completely blank.
-const roleData = computed(() => ROLE_CONFIG[auth.role] ?? ROLE_CONFIG.resident)
+// Fall back to 'resident' config if role is missing/unknown, so the
+// dashboard never renders completely blank.
+const roleData = computed(() => {
+  const base = ROLE_CONFIG[auth.role] ?? ROLE_CONFIG.resident
+
+  if (auth.role === 'secretary' && secretarySummary.value) {
+    const s = secretarySummary.value
+    return {
+      ...base,
+      metrics: [
+        { label: 'Open Complaints', value: String(s.open_complaints), sub: `+${s.today_complaints} raised today`, icon: '⚠',  tint: '#78BDE9' },
+        { label: 'Pending Dues',    value: formatINR(s.pending_dues), sub: `across ${s.pending_flats} flats`,      icon: '💳', tint: '#E0A030' },
+        { label: 'Active Vendors',  value: String(s.active_vendors), sub: `${s.vendor_categories} categories`,    icon: '🔧', tint: '#4E8EA2' },
+        { label: 'Unread Notices',  value: String(s.unread_notices), sub: 'posted this week',                     icon: '🔔', tint: '#49769F' },
+      ],
+      feed: s.recent_complaints.map(c => ({
+        tag: (c.tower && c.floor != null) ? `${c.tower}${c.floor}` : c.category.slice(0, 2).toUpperCase(),
+        title: c.description,
+        meta: [c.resident_name, c.flat_number].filter(Boolean).join(' · ') || '—',
+        status: priorityLabel(c.priority),
+        statusClass: priorityClass(c.priority),
+      })),
+      actionCard: s.unassigned > 0 ? {
+        label: 'Action needed',
+        text: `${s.unassigned} complaint${s.unassigned !== 1 ? 's' : ''} ${s.unassigned !== 1 ? 'are' : 'is'} unassigned and awaiting a vendor.`,
+        cta: 'Assign vendors',
+        to: '/sec/complaints',
+      } : null,
+    }
+  }
+
+  if (auth.role === 'resident' && residentSummary.value) {
+    const s = residentSummary.value
+    return {
+      ...base,
+      metrics: [
+        { label: 'Open Complaints',   value: String(s.open_complaints), sub: `${s.in_progress} in progress`, icon: '⚠',  tint: '#78BDE9' },
+        { label: 'Upcoming Bookings', value: s.upcoming_booking ? '1' : '0', sub: s.upcoming_booking ? `${s.upcoming_booking.amenity_name} · ${formatShortDate(s.upcoming_booking.date)}` : 'None scheduled', icon: '📅', tint: '#4E8EA2' },
+        { label: 'Pending Dues',      value: formatINRFull(s.pending_due), sub: s.next_due_date ? `due ${trimDay(formatShortDate(s.next_due_date))}` : 'all paid', icon: '💳', tint: '#E0A030' },
+        { label: 'Latest Notice',     value: s.latest_notice?.title || 'No notices', sub: s.latest_notice ? `${trimDay(s.latest_notice.date)}, ${s.latest_notice.time}` : '', icon: '🔔', tint: '#49769F' },
+      ],
+      feed: s.recent_complaints.map(c => ({
+        tag: c.id.slice(-3).toUpperCase(),
+        title: c.description,
+        meta: `${(c.category || '').charAt(0).toUpperCase()}${(c.category || '').slice(1)} · ${formatShortDate(c.created_at)}`,
+        status: issueStatusLabel(c.status),
+        statusClass: issueStatusClass(c.status),
+      })),
+      actionCard: s.pending_due > 0 ? {
+        label: 'Reminder',
+        text: `Maintenance of ${formatINRFull(s.pending_due)} is due${s.next_due_date ? ' on ' + trimDay(formatShortDate(s.next_due_date)) : ''}.`,
+        cta: 'View dues',
+        to: '/maintenance',
+      } : null,
+    }
+  }
+
+  return base
+})
 
 const metrics = computed(() => roleData.value.metrics)
 const quickActions = computed(() => roleData.value.quickActions)
@@ -114,6 +254,20 @@ function goTo(path) {
     <div class="welcome-line">
       <span>Good day, <strong>{{ auth.name }}</strong></span>
       <span class="welcome-sub">Here is what is happening in Raghvendra Sai Society</span>
+    </div>
+
+    <div v-if="activeEmergency" class="emergency-banner" @click="goTo('/emergency')">
+      <span class="emergency-icon">🚨</span>
+      <div class="emergency-content">
+        <span class="emergency-title">
+          Active emergency<span v-if="activeEmergencyCount > 1"> · {{ activeEmergencyCount }} alerts</span>
+        </span>
+        <span class="emergency-text">{{ activeEmergency.message }}</span>
+        <span class="emergency-meta">
+          {{ activeEmergency.created_by_name || 'Unknown' }} · {{ formatAlertTime(activeEmergency.created_at) }}
+        </span>
+      </div>
+      <span class="emergency-cta">View →</span>
     </div>
 
     <div class="metrics-grid">
@@ -435,4 +589,63 @@ function goTo(path) {
 }
 
 .sec-action-btn:hover { background: var(--c-900); }
+.emergency-banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--color-danger-bg);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-lg);
+  padding: 14px 18px;
+  margin-bottom: 22px;
+  cursor: pointer;
+  transition: box-shadow var(--transition-fast);
+}
+
+.emergency-banner:hover {
+  box-shadow: var(--shadow-sm);
+}
+
+.emergency-icon {
+  font-size: 26px;
+  flex-shrink: 0;
+}
+
+.emergency-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.emergency-title {
+  font-size: var(--font-size-sm);
+  font-weight: 800;
+  color: var(--color-danger-text);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.emergency-text {
+  font-size: var(--font-size-md);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.emergency-meta {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.emergency-cta {
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  color: var(--color-danger-text);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
 </style>

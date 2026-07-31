@@ -8,14 +8,16 @@ const notices     = ref([])
 const loading     = ref(true)
 const loadError   = ref('')
 
-const tags = ['all', 'General', 'Maintenance', 'Security', 'Event', 'Urgent']
+const tags = [
+  'all', 'General', 'Maintenance', 'Security', 'Event', 'Urgent',
+]
 
 const tagColors = {
-  General:     { accent: '#49769F', tagBg: '#EAF0F4' },
-  Maintenance: { accent: '#E0A030', tagBg: '#FBF1DE' },
-  Security:    { accent: '#B4442F', tagBg: '#FBE9E4' },
-  Event:       { accent: '#3AA06B', tagBg: '#E4F5ED' },
-  Urgent:      { accent: '#C43D3D', tagBg: '#FBE9E4' },
+  General:      { accent: '#49769F', tagBg: '#EAF0F4' },
+  Maintenance:  { accent: '#E0A030', tagBg: '#FBF1DE' },
+  Security:     { accent: '#B4442F', tagBg: '#FBE9E4' },
+  Event:        { accent: '#3AA06B', tagBg: '#E4F5ED' },
+  Urgent:       { accent: '#C43D3D', tagBg: '#FBE9E4' },
 }
 
 async function fetchNotices() {
@@ -38,7 +40,10 @@ onMounted(fetchNotices)
 
 // re-fetch from the server when the tag filter changes, rather than
 // filtering client-side — keeps behavior consistent with the backend's
-// own relevance-based filtering (e.g. residents only seeing their tower)
+// own relevance-based filtering (e.g. residents only seeing their tower).
+// relevance itself is never sent from here: the backend derives it from
+// current_user.resident.flat.tower and applies or_(relevance == tower, relevance == 'all')
+// automatically, so a resident always sees notices for 'all' + their own block.
 watch(filterTag, fetchNotices)
 
 // search stays client-side since it's just narrowing what's already loaded

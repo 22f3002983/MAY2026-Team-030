@@ -9,6 +9,12 @@ const notices     = ref([])
 const loading     = ref(true)
 const error       = ref('')
 const formError   = ref('')
+const blocks      = ref([])   // real tower values from Flat table, via /flats/blocks
+
+// --- filters ---
+const statusFilter    = ref('active')   // 'active' | 'expired' | 'all' — defaults to active/non-expired
+const tagFilter        = ref('All')      // 'All' | one of `tags`
+const relevanceFilter = ref('all')       // 'all' | block value
 
 
 const newNotice = ref({
@@ -20,29 +26,50 @@ const newNotice = ref({
 })
 
 
-const tags = ['General', 'Maintenance', 'Security', 'Event', 'Urgent']
-
-
-const relevanceOptions = [
-  { value: 'all',     label: 'All Residents' },
-  { value: 'block_a', label: 'Block A Only'  },
-  { value: 'block_b', label: 'Block B Only'  },
-  { value: 'block_c', label: 'Block C Only'  },
+const tags = [
+  'General', 'Maintenance', 'Security', 'Event', 'Urgent',
 ]
 
 
+// built from actual Flat.tower values instead of hardcoded block_a/b/c —
+// keeps notice.relevance in sync with what residents are filtered against
+// (resident.flat.tower) on the backend
+const relevanceOptions = computed(() => [
+  { value: 'all', label: 'All Residents' },
+  ...blocks.value.map(b => ({ value: b, label: `Block ${b} Only` })),
+])
+
+// filter dropdown for relevance needs its own "All" (meaning "don't filter"),
+// separate from the notice-level "all residents" value used in the form
+const relevanceFilterOptions = computed(() => [
+  { value: 'all', label: 'All Blocks' },
+  ...blocks.value.map(b => ({ value: b, label: `Block ${b}` })),
+])
+
+
 const tagColors = {
-  General:     { accent: '#49769F', tagBg: '#EAF0F4' },
-  Maintenance: { accent: '#E0A030', tagBg: '#FBF1DE' },
-  Security:    { accent: '#B4442F', tagBg: '#FBE9E4' },
-  Event:       { accent: '#3AA06B', tagBg: '#E4F5ED' },
-  Urgent:      { accent: '#C43D3D', tagBg: '#FBE9E4' },
+  General:      { accent: '#49769F', tagBg: '#EAF0F4' },
+  Maintenance:  { accent: '#E0A030', tagBg: '#FBF1DE' },
+  Security:     { accent: '#B4442F', tagBg: '#FBE9E4' },
+  Event:        { accent: '#3AA06B', tagBg: '#E4F5ED' },
+  Urgent:       { accent: '#C43D3D', tagBg: '#FBE9E4' },
 }
 
 
 onMounted(async () => {
-  await fetchNotices()
+  await Promise.all([fetchNotices(), fetchBlocks()])
 })
+
+
+async function fetchBlocks() {
+  try {
+    const res = await api.get('/flats/blocks')
+    blocks.value = res.data.blocks
+  } catch (err) {
+    // non-fatal — relevanceOptions just falls back to 'All Residents' only
+    console.error('Failed to load blocks', err)
+  }
+}
 
 
 async function fetchNotices() {
@@ -58,12 +85,48 @@ async function fetchNotices() {
 }
 
 
+function isExpired(dateStr) {
+  if (!dateStr) return false
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const exp = new Date(dateStr)
+  return exp < today
+}
+
+
+function toggleUrgent() {
+  tagFilter.value = tagFilter.value === 'Urgent' ? 'All' : 'Urgent'
+}
+
+
 const filteredNotices = computed(() => {
-  if (!searchQuery.value) return notices.value
-  return notices.value.filter(n =>
-    n.title.toLowerCase().includes(searchQuery.value.toLowerCase()) ||
-    n.description.toLowerCase().includes(searchQuery.value.toLowerCase())
-  )
+  let list = notices.value
+
+  // status: active (default) hides expired notices, expired shows only expired, all shows everything
+  if (statusFilter.value === 'active') {
+    list = list.filter(n => !isExpired(n.expiry_date))
+  } else if (statusFilter.value === 'expired') {
+    list = list.filter(n => isExpired(n.expiry_date))
+  }
+
+  if (tagFilter.value !== 'All') {
+    list = list.filter(n => n.tag === tagFilter.value)
+  }
+
+  // block filter: keep notices targeted at the selected block, plus notices meant for everyone
+  if (relevanceFilter.value !== 'all') {
+    list = list.filter(n => n.relevance === relevanceFilter.value || n.relevance === 'all')
+  }
+
+  if (searchQuery.value) {
+    const q = searchQuery.value.toLowerCase()
+    list = list.filter(n =>
+      n.title.toLowerCase().includes(q) ||
+      n.description.toLowerCase().includes(q)
+    )
+  }
+
+  return list
 })
 
 
@@ -119,6 +182,13 @@ function formatDate(dateStr) {
     day: 'numeric', month: 'short',
   })
 }
+
+
+// resolves the raw relevance value (e.g. 'all', 'A', 'B') to a readable label
+function relevanceLabel(relevance) {
+  if (relevance === 'all') return 'All residents'
+  return `Block ${relevance}`
+}
 </script>
 
 
@@ -129,7 +199,7 @@ function formatDate(dateStr) {
     <div class="page-header">
       <div>
         <h2>Notices</h2>
-        <p class="page-sub">{{ notices.length }} active notices posted</p>
+        <p class="page-sub">{{ filteredNotices.length }} of {{ notices.length }} notices shown</p>
       </div>
       <button class="btn-add" @click="showForm = true">+ Post a notice</button>
     </div>
@@ -141,6 +211,31 @@ function formatDate(dateStr) {
       placeholder="Search notices..."
       class="search-input"
     />
+
+    <div class="filter-bar">
+      <select v-model="statusFilter" class="n-input filter-input">
+        <option value="active">Active (non-expired)</option>
+        <option value="expired">Expired</option>
+        <option value="all">All</option>
+      </select>
+
+      <select v-model="tagFilter" class="n-input filter-input">
+        <option value="All">All Tags</option>
+        <option v-for="t in tags" :key="t" :value="t">{{ t }}</option>
+      </select>
+
+      <select v-model="relevanceFilter" class="n-input filter-input">
+        <option v-for="r in relevanceFilterOptions" :key="r.value" :value="r.value">{{ r.label }}</option>
+      </select>
+
+      <button
+        class="urgent-toggle"
+        :class="{ active: tagFilter === 'Urgent' }"
+        @click="toggleUrgent"
+      >
+        ⚡ Urgent
+      </button>
+    </div>
 
 
     <!-- loading -->
@@ -166,7 +261,7 @@ function formatDate(dateStr) {
               {{ notice.tag }}
             </span>
             <span class="notice-date">{{ formatDate(notice.created_at) }}</span>
-            <span class="notice-relevance">{{ notice.relevance === 'all' ? 'All residents' : notice.relevance }}</span>
+            <span class="notice-relevance">{{ relevanceLabel(notice.relevance) }}</span>
             <span class="notice-expiry">Expires {{ notice.expiry_date }}</span>
           </div>
           <h3 class="notice-title">{{ notice.title }}</h3>
@@ -296,12 +391,49 @@ function formatDate(dateStr) {
   background: var(--color-surface);
   color: var(--color-text-primary);
   outline: none;
-  margin-bottom: 20px;
+  margin-bottom: 12px;
   transition: border-color var(--transition-fast);
 }
 
 
 .search-input:focus { border-color: var(--c-600); }
+
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.filter-input {
+  width: auto;
+  min-width: 150px;
+  flex: 1 1 150px;
+}
+
+.urgent-toggle {
+  height: 42px;
+  padding: 0 16px;
+  border-radius: var(--radius-md);
+  border: 1.5px solid var(--color-border-soft);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-md);
+  font-weight: 700;
+  white-space: nowrap;
+  transition: all var(--transition-fast);
+}
+
+.urgent-toggle:hover {
+  border-color: #C43D3D;
+  color: #C43D3D;
+}
+
+.urgent-toggle.active {
+  background: #FBE9E4;
+  border-color: #C43D3D;
+  color: #C43D3D;
+}
 
 
 .notices-list {
@@ -549,6 +681,3 @@ label {
   color: var(--c-800);
 }
 </style>
-
-
-

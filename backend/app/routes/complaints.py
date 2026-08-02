@@ -114,7 +114,7 @@ def find_matching_issue(title, category):
     candidates = CommunityIssue.query.filter(
         CommunityIssue.category == category,
         CommunityIssue.status.in_(['open', 'in_progress']),
-    ).all()
+    ).with_for_update().all()
     for candidate in candidates:
         if candidate.title.strip().lower() == normalized_title:
             return candidate

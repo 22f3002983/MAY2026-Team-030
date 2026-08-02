@@ -641,7 +641,9 @@ function showToast(text) {
                 rows="2"
               ></textarea>
               <div class="join-actions">
-                <button class="btn-primary" @click="confirmJoinFromDetail">Confirm — Join Issue</button>
+               <button class="btn-primary" :disabled="joining" @click="confirmJoinFromDetail">
+  {{ joining ? 'Joining…' : 'Confirm — Join Issue' }}
+</button>
                 <button class="btn-outline" @click="cancelJoinForm">Cancel</button>
               </div>
             </template>
@@ -769,8 +771,8 @@ function showToast(text) {
                     <span :class="['status-badge', statusClass(m.status)]">{{ m.status }}</span>
                   </div>
                   <p class="report-desc">{{ m.location }} · {{ m.reports.length }} reported</p>
-                  <button class="btn-outline join-btn" @click="joinMatch(m)">Join {{ m.id }}</button>
-                </div>
+                  
+                </div><button class="btn-outline join-btn" :disabled="submittingIssue" @click="joinMatch(m)">Join {{ m.id }}</button>
               </div>
             </div>
             <div v-else class="section" style="padding-top:0;border-top:none;">
@@ -778,9 +780,9 @@ function showToast(text) {
               <p class="helper-text">Nothing matching this description is currently open — you're likely the first to report it.</p>
             </div>
 
-            <button class="btn-primary" @click="createNewIssue">
-              None of these — Raise as New Issue
-            </button>
+            <button class="btn-primary" :disabled="submittingIssue" @click="createNewIssue">
+  {{ submittingIssue ? 'Raising…' : 'None of these — Raise as New Issue' }}
+</button>
             <button class="btn-outline back-btn" @click="raiseStep = 'form'">← Back to edit details</button>
           </template>
 

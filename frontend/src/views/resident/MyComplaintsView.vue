@@ -4,13 +4,16 @@ import { useRouter } from 'vue-router'
 import api from '../../api/axios'
 import { useAuthStore } from '../../stores/auth' // adjust path if this view lives elsewhere
 
+
 const router = useRouter()
 const auth = useAuthStore()
+
 
 // backend enums are lowercase singular; frontend displays them capitalized
 const categoryOptions = ['Plumbing', 'Electrical', 'Cleaning', 'Carpentry', 'Security', 'Gardening', 'Pest Control', 'Other']
 const priorityOptions = ['High', 'Medium', 'Low']
 const priorityRank = { High: 3, Medium: 2, Low: 1 }
+
 
 const towerOptions = ['Tower A', 'Tower B', 'Common Area / Society-wide']
 const amenityOptions = [
@@ -18,7 +21,9 @@ const amenityOptions = [
   'Parking', 'Water Tank', 'Security Cabin', 'Gate / Entrance', 'Terrace', 'Other',
 ]
 
+
 const DEFAULT_JOIN_DESC = 'Confirmed the same issue for me too'
+
 
 function toBackendCategory(c) { return c.toLowerCase().replace(' ', '_') }
 function toBackendPriority(p) { return p.toLowerCase() }
@@ -29,14 +34,18 @@ function toFrontendCategory(c) {
 }
 function toFrontendPriority(p) { return p ? p.charAt(0).toUpperCase() + p.slice(1) : p }
 
+
 function formatDate(iso) {
   if (!iso) return ''
   return new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
 }
 
+
 /* ---------------- Vendors (name lookup only — resident can't assign) ---------------- */
 
+
 const vendors = ref([])
+
 
 async function fetchVendors() {
   try {
@@ -47,15 +56,19 @@ async function fetchVendors() {
   }
 }
 
+
 function vendorNameById(id) {
   return vendors.value.find(v => v.id === id)?.name || null
 }
 
+
 /* ---------------- Load data ---------------- */
+
 
 const loading = ref(true)
 const loadError = ref('')
 const issues = ref([])
+
 
 // maps a raw issue_to_dict (society-wide, full reporters) into the shape
 // the rest of this component already expects
@@ -85,6 +98,7 @@ function mapSocietyIssue(i) {
     })),
   }
 }
+
 
 // maps a resident's own flattened complaint_to_dict row (used for issues
 // this resident participated in that are resolved/closed — those don't
@@ -118,6 +132,7 @@ function mapOwnComplaint(c) {
   }
 }
 
+
 async function loadIssues() {
   loading.value = true
   loadError.value = ''
@@ -127,14 +142,17 @@ async function loadIssues() {
       api.get('/complaints'),
     ])
 
+
     const societyIssues = (societyRes.data.complaints || []).map(mapSocietyIssue)
     const societyIds = new Set(societyIssues.map(i => i.id))
+
 
     // resolved/rejected issues this resident participated in never come
     // back from the society (open-only) fetch — add them from "mine"
     const mineOnlyClosed = (mineRes.data.complaints || [])
       .filter(c => !societyIds.has(c.issue_id))
       .map(mapOwnComplaint)
+
 
     issues.value = [...societyIssues, ...mineOnlyClosed]
   } catch (err) {
@@ -145,27 +163,35 @@ async function loadIssues() {
   }
 }
 
+
 onMounted(async () => {
   await fetchVendors()
   await loadIssues()
 })
 
+
 function isParticipant(issue) {
   return issue.reports.some(r => r.resident_id === auth.user?.resident_id)
 }
+
 
 function isOwnReport(r) {
   return r.resident_id === auth.user?.resident_id
 }
 
+
 const visibleIssues = computed(() => issues.value)
+
 
 /* ---------------- Tabs ---------------- */
 
+
 const activeTab = ref('mine')
+
 
 const mineIssues = computed(() => visibleIssues.value.filter(isParticipant))
 const openIssues = computed(() => visibleIssues.value.filter(i => ['Open', 'In Progress'].includes(i.status)))
+
 
 // FIXED — the "My Issues" tab badge was showing mineIssues.length, which
 // counts every status (Open, In Progress, Resolved, Rejected). Only the
@@ -175,12 +201,15 @@ const mineOpenCount = computed(() =>
   mineIssues.value.filter(i => ['Open', 'In Progress'].includes(i.status)).length
 )
 
+
 const mineStatusFilters = ['All', 'Open', 'In Progress', 'Resolved', 'Rejected']
 const filterStatus = ref('Open')
 const filterCategory = ref('all')
 const searchQuery = ref('')
 
+
 const listForTab = computed(() => activeTab.value === 'mine' ? mineIssues.value : openIssues.value)
+
 
 const filtered = computed(() => {
   const q = searchQuery.value.toLowerCase()
@@ -195,6 +224,7 @@ const filtered = computed(() => {
   }).sort((a, b) => priorityRank[b.priority] - priorityRank[a.priority])
 })
 
+
 function statusClass(s) {
   if (s === 'Open') return 'status-open'
   if (s === 'In Progress') return 'status-progress'
@@ -203,16 +233,19 @@ function statusClass(s) {
   return ''
 }
 
+
 function priorityClass(p) {
   if (p === 'High') return 'pri-high'
   if (p === 'Medium') return 'pri-medium'
   return 'pri-low'
 }
 
+
 function categoryIcon(cat) {
   const map = { Plumbing: '🔧', Electrical: '⚡', Cleaning: '🧹', Carpentry: '🪚', Other: '📋' }
   return map[cat] || '📋'
 }
+
 
 function formatSlot(iso, minutes) {
   if (!iso) return ''
@@ -222,26 +255,33 @@ function formatSlot(iso, minutes) {
   return `${datePart}, ${timePart}${minutes ? ` · ~${minutes} min` : ''}`
 }
 
+
 /* ---------------- Navigate to home services ---------------- */
+
 
 function goToServiceRequests() {
   router.push('/services')
 }
 
+
 /* ---------------- Detail modal ---------------- */
+
 
 const showDetail = ref(false)
 const selected = ref(null)
 const rating = ref(0)
 const submittingFeedback = ref(false)
 
+
 const editingReportIdx = ref(null)
 const editReportText = ref('')
 const savingReport = ref(false)
 
+
 const showJoinForm = ref(false)
 const joinDescription = ref('')
 const joining = ref(false)
+
 
 function openDetail(issue) {
   selected.value = issue
@@ -253,6 +293,7 @@ function openDetail(issue) {
   showDetail.value = true
 }
 
+
 function closeDetail() {
   showDetail.value = false
   selected.value = null
@@ -262,15 +303,18 @@ function closeDetail() {
   joinDescription.value = ''
 }
 
+
 function startJoinFromDetail() {
   showJoinForm.value = true
   joinDescription.value = DEFAULT_JOIN_DESC
 }
 
+
 function cancelJoinForm() {
   showJoinForm.value = false
   joinDescription.value = ''
 }
+
 
 // joining works via the backend's existing find_matching_issue logic —
 // submitting a complaint with the SAME title + category as an existing
@@ -278,6 +322,7 @@ function cancelJoinForm() {
 async function confirmJoinFromDetail() {
   const issue = selected.value
   if (!issue || isParticipant(issue)) return
+
 
   joining.value = true
   try {
@@ -297,20 +342,24 @@ async function confirmJoinFromDetail() {
   }
 }
 
+
 function startEditReport(idx) {
   editingReportIdx.value = idx
   editReportText.value = selected.value.reports[idx].desc
 }
+
 
 function cancelEditReport() {
   editingReportIdx.value = null
   editReportText.value = ''
 }
 
+
 async function saveEditReport(idx) {
   const text = editReportText.value.trim()
   if (!text) return
   const report = selected.value.reports[idx]
+
 
   savingReport.value = true
   try {
@@ -325,10 +374,12 @@ async function saveEditReport(idx) {
   }
 }
 
+
 async function deleteOwnReport(idx) {
   const report = selected.value.reports[idx]
   const confirmed = window.confirm("Remove your description from this issue? If you're the only one reporting it, the issue itself will be removed.")
   if (!confirmed) return
+
 
   savingReport.value = true
   try {
@@ -343,10 +394,12 @@ async function deleteOwnReport(idx) {
   }
 }
 
+
 async function submitFeedback() {
   const issue = selected.value
   const myReport = issue?.reports.find(isOwnReport)
   if (!issue || !myReport || rating.value < 1) return
+
 
   submittingFeedback.value = true
   try {
@@ -363,16 +416,20 @@ async function submitFeedback() {
   }
 }
 
+
 /* ---------------- Raise new issue (with duplicate check) ---------------- */
+
 
 const showRaise = ref(false)
 const raiseStep = ref('form')
 const submittingIssue = ref(false)
 
+
 const newTitle = ref('')
 const newCategory = ref('Electrical')
 const newDesc = ref('')
 const newPriority = ref('Medium')
+
 
 const newTower = ref('Tower A')
 const newFloor = ref('')
@@ -380,7 +437,9 @@ const newUnit = ref('')
 const newIsAmenity = ref(false)
 const newAmenity = ref(amenityOptions[0])
 
+
 const duplicateMatches = ref([])
+
 
 const newLocationString = computed(() => {
   const bits = []
@@ -393,6 +452,7 @@ const newLocationString = computed(() => {
   bits.push(newTower.value)
   return bits.join(', ')
 })
+
 
 function openRaise() {
   raiseStep.value = 'form'
@@ -409,12 +469,15 @@ function openRaise() {
   showRaise.value = true
 }
 
+
 function closeRaise() {
   showRaise.value = false
 }
 
+
 const canCheck = computed(() => newTitle.value.trim() && newTower.value && newDesc.value.trim())
 const checkingDuplicates = ref(false)
+
 
 // asks the backend to compare this report against open issues in the same
 // category using the AI model — the frontend just maps the returned ids
@@ -439,6 +502,7 @@ async function checkForDuplicates() {
   }
 }
 
+
 async function joinMatch(issue) {
   submittingIssue.value = true
   try {
@@ -457,6 +521,7 @@ async function joinMatch(issue) {
     submittingIssue.value = false
   }
 }
+
 
 async function createNewIssue() {
   submittingIssue.value = true
@@ -479,11 +544,14 @@ async function createNewIssue() {
   }
 }
 
+
 /* ---------------- Toast ---------------- */
+
 
 const toastVisible = ref(false)
 const toastText = ref('')
 let toastTimer = null
+
 
 function showToast(text) {
   toastText.value = text
@@ -493,8 +561,10 @@ function showToast(text) {
 }
 </script>
 
+
 <template>
   <div class="community-issues">
+
 
     <div class="page-header">
       <div>
@@ -506,6 +576,7 @@ function showToast(text) {
         <button class="btn-raise" @click="openRaise">+ Raise New</button>
       </div>
     </div>
+
 
     <!-- tabs -->
     <div class="tab-group">
@@ -519,6 +590,7 @@ function showToast(text) {
     <p v-if="activeTab === 'open'" class="tab-hint">
       Already dealing with one of these? Join it instead of raising a duplicate.
     </p>
+
 
     <!-- toolbar -->
     <div class="toolbar">
@@ -538,6 +610,7 @@ function showToast(text) {
       </div>
     </div>
 
+
     <!-- issue cards -->
     <div class="issues-list">
       <div v-for="i in filtered" :key="i.id" class="issue-card" @click="openDetail(i)">
@@ -554,11 +627,13 @@ function showToast(text) {
         <span :class="['status-badge', statusClass(i.status)]">{{ i.status }}</span>
       </div>
 
+
       <div v-if="filtered.length === 0" class="empty-state">
         <p>{{ activeTab === 'mine' ? "You haven't raised or joined any issues yet" : 'No open issues right now' }}</p>
         <span>{{ activeTab === 'mine' ? 'Raise one, or check what\'s already open in the society' : 'Nice — the society is all caught up' }}</span>
       </div>
     </div>
+
 
     <!-- detail modal -->
     <div v-if="showDetail" class="modal-overlay" @click.self="closeDetail">
@@ -571,12 +646,14 @@ function showToast(text) {
           <button class="close-btn" @click="closeDetail">✕</button>
         </div>
 
+
         <div class="modal-body">
           <div class="badges-row">
             <span class="category-badge">{{ selected?.category }}</span>
             <span :class="['priority-badge', priorityClass(selected?.priority)]">{{ selected?.priority }}</span>
             <span :class="['status-badge', statusClass(selected?.status)]">{{ selected?.status }}</span>
           </div>
+
 
           <div class="section">
             <span class="section-label">Summary · {{ selected?.reports.length }} resident(s) reporting</span>
@@ -593,6 +670,7 @@ function showToast(text) {
                   </span>
                   <span class="report-date">{{ r.date }}</span>
                 </div>
+
 
                 <template v-if="editingReportIdx === idx">
                   <textarea
@@ -621,6 +699,7 @@ function showToast(text) {
             </div>
           </div>
 
+
           <div v-if="selected?.vendor" class="section">
             <span class="section-label">Assigned</span>
             <div class="resolved-card">
@@ -628,6 +707,7 @@ function showToast(text) {
               <span class="slot-text">{{ formatSlot(selected.scheduledStart, selected.durationMinutes) }}</span>
             </div>
           </div>
+
 
           <div v-if="selected && !isParticipant(selected) && ['Open', 'In Progress'].includes(selected.status)" class="section">
             <template v-if="!showJoinForm">
@@ -647,12 +727,14 @@ function showToast(text) {
             </template>
           </div>
 
+
           <div v-if="selected?.status === 'Resolved' && isParticipant(selected)" class="section">
             <span class="section-label">Rate this resolution</span>
             <span class="stars">
               <span v-for="n in 5" :key="n" class="star" :class="{ filled: n <= rating }" @click="rating = n">★</span>
             </span>
           </div>
+
 
           <div v-if="selected?.status === 'Rejected'" class="section">
             <span class="section-label">Rejected</span>
@@ -661,6 +743,7 @@ function showToast(text) {
         </div>
       </div>
     </div>
+
 
     <!-- raise modal -->
     <div v-if="showRaise" class="modal-overlay" @click.self="closeRaise">
@@ -673,23 +756,30 @@ function showToast(text) {
           <button class="close-btn" @click="closeRaise">✕</button>
         </div>
 
+
         <div class="modal-body">
 
+
           <template v-if="raiseStep === 'form'">
+
 
             <div class="form-block">
               <span class="block-label">What's the issue</span>
 
+
               <label>Title</label>
               <input v-model="newTitle" type="text" class="n-input" placeholder="e.g. Corridor light flickering" />
+
 
               <label>Category</label>
               <select v-model="newCategory" class="n-input">
                 <option v-for="c in categoryOptions" :key="c" :value="c">{{ categoryIcon(c) }} {{ c }}</option>
               </select>
 
+
               <label>Describe the issue</label>
               <textarea v-model="newDesc" class="n-input n-textarea" rows="3" placeholder="What did you notice, and when?"></textarea>
+
 
               <label>How urgent does this feel to you?</label>
               <div class="priority-options">
@@ -701,8 +791,10 @@ function showToast(text) {
               </div>
             </div>
 
+
             <div class="form-block location-block">
               <span class="block-label">📍 Where is this</span>
+
 
               <div class="location-grid">
                 <div class="location-field">
@@ -717,6 +809,7 @@ function showToast(text) {
                 </div>
               </div>
 
+
               <button
                 type="button"
                 :class="['amenity-toggle', { active: newIsAmenity }]"
@@ -726,10 +819,12 @@ function showToast(text) {
                 This is at a shared amenity, not a flat
               </button>
 
+
               <div v-if="!newIsAmenity" class="location-field full">
                 <span class="location-label">Unit / Flat</span>
                 <input v-model="newUnit" type="text" class="n-input" placeholder="e.g. A-402" />
               </div>
+
 
               <div v-else class="location-field full">
                 <span class="location-label">Which amenity?</span>
@@ -738,10 +833,12 @@ function showToast(text) {
                 </select>
               </div>
 
+
               <div class="location-preview">
                 📌 {{ newLocationString }}
               </div>
             </div>
+
 
             <div class="ai-check-card">
               <div class="ai-check-icon">✨</div>
@@ -758,6 +855,7 @@ function showToast(text) {
               </button>
             </div>
           </template>
+
 
           <template v-else>
             <div v-if="duplicateMatches.length" class="section" style="padding-top:0;border-top:none;">
@@ -778,15 +876,18 @@ function showToast(text) {
               <p class="helper-text">Nothing matching this description is currently open — you're likely the first to report it.</p>
             </div>
 
+
             <button class="btn-primary" @click="createNewIssue">
               None of these — Raise as New Issue
             </button>
             <button class="btn-outline back-btn" @click="raiseStep = 'form'">← Back to edit details</button>
           </template>
 
+
         </div>
       </div>
     </div>
+
 
     <!-- toast -->
     <transition name="toast-fade">
@@ -796,11 +897,14 @@ function showToast(text) {
       </div>
     </transition>
 
+
   </div>
 </template>
 
+
 <style scoped>
 .community-issues { max-width: var(--content-max-width); }
+
 
 .page-header {
   display: flex;
@@ -809,10 +913,13 @@ function showToast(text) {
   margin-bottom: 20px;
 }
 
+
 .page-header h2 { font-size: var(--font-size-3xl); font-weight: 800; letter-spacing: -0.4px; }
 .page-sub { font-size: var(--font-size-sm); color: var(--color-text-muted); margin-top: 4px; }
 
+
 .header-actions { display: flex; gap: 10px; }
+
 
 .btn-raise {
   height: 42px;
@@ -826,7 +933,9 @@ function showToast(text) {
   transition: background var(--transition-fast);
 }
 
+
 .btn-raise:hover { background: var(--c-900); }
+
 
 /* tabs */
 .tab-group {
@@ -840,6 +949,7 @@ function showToast(text) {
   margin-bottom: 10px;
 }
 
+
 .tab {
   display: flex;
   align-items: center;
@@ -852,7 +962,9 @@ function showToast(text) {
   transition: all var(--transition-fast);
 }
 
+
 .tab.active { background: var(--c-800); color: #fff; }
+
 
 .tab-count {
   font-size: 11px;
@@ -862,7 +974,9 @@ function showToast(text) {
   background: rgba(0,0,0,0.08);
 }
 
+
 .tab.active .tab-count { background: rgba(255,255,255,0.25); }
+
 
 .tab-hint {
   font-size: var(--font-size-xs);
@@ -870,9 +984,11 @@ function showToast(text) {
   margin-bottom: 14px;
 }
 
+
 /* toolbar */
 .toolbar { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
 .toolbar-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
 
 .search-input {
   height: 42px;
@@ -887,7 +1003,9 @@ function showToast(text) {
   transition: border-color var(--transition-fast);
 }
 
+
 .search-input:focus { border-color: var(--c-600); }
+
 
 .status-pill-group {
   display: flex;
@@ -898,6 +1016,7 @@ function showToast(text) {
   padding: 4px;
 }
 
+
 .status-pill {
   padding: 7px 12px;
   border-radius: var(--radius-sm);
@@ -907,7 +1026,9 @@ function showToast(text) {
   transition: all var(--transition-fast);
 }
 
+
 .status-pill.active { background: var(--c-800); color: #fff; }
+
 
 .filter-select {
   height: 36px;
@@ -922,10 +1043,13 @@ function showToast(text) {
   cursor: pointer;
 }
 
+
 .ml-auto { margin-left: auto; }
+
 
 /* issue cards */
 .issues-list { display: flex; flex-direction: column; gap: 10px; }
+
 
 .issue-card {
   display: flex;
@@ -941,7 +1065,9 @@ function showToast(text) {
   text-align: left;
 }
 
+
 .issue-card:hover { background: var(--color-surface-muted); }
+
 
 .cat-icon {
   width: 42px;
@@ -955,11 +1081,15 @@ function showToast(text) {
   font-size: 20px;
 }
 
+
 .card-summary { flex: 1; min-width: 0; }
+
 
 .card-top { display: flex; align-items: center; gap: 8px; }
 
+
 .issue-title { font-size: var(--font-size-md); font-weight: 700; color: var(--color-text-primary); }
+
 
 .following-badge {
   font-size: 10px;
@@ -972,7 +1102,9 @@ function showToast(text) {
   letter-spacing: 0.3px;
 }
 
+
 .issue-loc { font-size: var(--font-size-sm); color: var(--color-text-muted); margin-top: 2px; }
+
 
 .reports-badge {
   font-size: var(--font-size-xs);
@@ -980,6 +1112,7 @@ function showToast(text) {
   color: var(--color-text-secondary);
   white-space: nowrap;
 }
+
 
 .priority-badge, .status-badge {
   padding: 3px 10px;
@@ -990,18 +1123,22 @@ function showToast(text) {
   flex-shrink: 0;
 }
 
+
 .pri-high   { background: var(--color-danger-bg);  color: var(--color-danger-text);  }
 .pri-medium { background: var(--color-warning-bg); color: var(--color-warning-text); }
 .pri-low    { background: var(--color-success-bg); color: var(--color-success-text); }
+
 
 .status-open     { background: var(--color-info-bg);    color: var(--color-info-text);    }
 .status-progress { background: var(--color-warning-bg); color: var(--color-warning-text); }
 .status-resolved { background: var(--color-success-bg); color: var(--color-success-text); }
 .status-rejected { background: var(--color-danger-bg);  color: var(--color-danger-text);  }
 
+
 .empty-state { text-align: center; padding: 60px 20px; }
 .empty-state p { font-size: var(--font-size-lg); font-weight: 600; color: var(--color-text-muted); margin-bottom: 6px; }
 .empty-state span { font-size: var(--font-size-sm); color: var(--color-text-muted); }
+
 
 /* modal */
 .modal-overlay {
@@ -1015,6 +1152,7 @@ function showToast(text) {
   padding: 20px;
 }
 
+
 .modal {
   background: var(--color-surface);
   border-radius: var(--radius-xl);
@@ -1026,7 +1164,9 @@ function showToast(text) {
   box-shadow: var(--shadow-lg);
 }
 
+
 .modal-lg { max-width: 560px; }
+
 
 .modal-header {
   display: flex;
@@ -1037,7 +1177,9 @@ function showToast(text) {
   flex-shrink: 0;
 }
 
+
 .modal-header h3 { font-size: var(--font-size-xl); font-weight: 700; }
+
 
 .modal-sub {
   display: block;
@@ -1045,6 +1187,7 @@ function showToast(text) {
   color: var(--color-text-muted);
   margin-top: 3px;
 }
+
 
 .close-btn {
   width: 32px;
@@ -1059,7 +1202,9 @@ function showToast(text) {
   transition: background var(--transition-fast);
 }
 
+
 .close-btn:hover { background: var(--color-border); }
+
 
 .modal-body {
   padding: 20px 24px 26px;
@@ -1069,7 +1214,9 @@ function showToast(text) {
   gap: 14px;
 }
 
+
 .badges-row { display: flex; gap: 8px; flex-wrap: wrap; }
+
 
 .category-badge {
   display: inline-block;
@@ -1082,7 +1229,9 @@ function showToast(text) {
   border: 1px solid var(--color-border);
 }
 
+
 .section { padding-top: 14px; border-top: 1px solid var(--color-border); }
+
 
 .section-label {
   display: block;
@@ -1094,6 +1243,7 @@ function showToast(text) {
   margin-bottom: 10px;
 }
 
+
 .ai-summary {
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
@@ -1102,7 +1252,9 @@ function showToast(text) {
   margin-bottom: 12px;
 }
 
+
 .reports-list { display: flex; flex-direction: column; gap: 8px; }
+
 
 .report-card {
   background: var(--color-surface-soft);
@@ -1111,15 +1263,18 @@ function showToast(text) {
   padding: 10px 12px;
 }
 
+
 .report-card-own {
   border-color: var(--c-600);
   background: #EAF6FB;
 }
 
+
 .report-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 4px; }
 .report-resident { display: flex; align-items: center; gap: 6px; font-size: var(--font-size-xs); font-weight: 700; color: var(--color-text-primary); }
 .report-date { font-size: var(--font-size-xs); color: var(--color-text-muted); white-space: nowrap; }
 .report-desc { font-size: var(--font-size-sm); color: var(--color-text-secondary); line-height: 1.5; }
+
 
 .you-badge {
   font-size: 9px;
@@ -1132,6 +1287,7 @@ function showToast(text) {
   letter-spacing: 0.3px;
 }
 
+
 .report-foot {
   display: flex;
   align-items: center;
@@ -1141,6 +1297,7 @@ function showToast(text) {
   flex-wrap: wrap;
 }
 
+
 .mini-priority-tag {
   font-size: 10px;
   font-weight: 700;
@@ -1148,11 +1305,13 @@ function showToast(text) {
   border-radius: var(--radius-pill);
 }
 
+
 .report-own-actions {
   display: flex;
   gap: 14px;
   margin-left: auto;
 }
+
 
 .link-btn {
   font-size: var(--font-size-xs);
@@ -1160,14 +1319,18 @@ function showToast(text) {
   color: var(--c-800);
 }
 
+
 .link-btn:hover { text-decoration: underline; }
 
+
 .link-danger { color: var(--color-danger-text); }
+
 
 .edit-textarea {
   margin-top: 4px;
   background: var(--color-surface);
 }
+
 
 .report-edit-actions {
   display: flex;
@@ -1175,14 +1338,17 @@ function showToast(text) {
   margin-top: 8px;
 }
 
+
 .btn-sm {
   height: 32px;
   padding: 0 12px;
   font-size: var(--font-size-xs);
 }
 
+
 .match-card { display: flex; flex-direction: column; gap: 8px; }
 .join-btn { align-self: flex-start; }
+
 
 label, .join-label {
   display: block;
@@ -1193,7 +1359,9 @@ label, .join-label {
   margin-bottom: 6px;
 }
 
+
 .modal-body > label:first-child { margin-top: 0; }
+
 
 .join-actions {
   display: flex;
@@ -1201,7 +1369,9 @@ label, .join-label {
   margin-top: 10px;
 }
 
+
 .join-actions .btn-primary { margin-top: 0; }
+
 
 .n-input {
   width: 100%;
@@ -1217,8 +1387,10 @@ label, .join-label {
   transition: border-color var(--transition-fast);
 }
 
+
 .n-input:focus { border-color: var(--c-600); }
 .n-select { cursor: pointer; }
+
 
 .n-textarea {
   height: auto;
@@ -1228,12 +1400,14 @@ label, .join-label {
   line-height: 1.5;
 }
 
+
 .helper-text {
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
   margin-top: 6px;
   line-height: 1.5;
 }
+
 
 /* raise-form blocks */
 .form-block {
@@ -1243,7 +1417,9 @@ label, .join-label {
   padding: 16px 16px 18px;
 }
 
+
 .form-block + .form-block { margin-top: 14px; }
+
 
 .block-label {
   display: block;
@@ -1255,8 +1431,10 @@ label, .join-label {
   margin-bottom: 4px;
 }
 
+
 .form-block label { margin-top: 12px; }
 .form-block > label:first-of-type { margin-top: 12px; }
+
 
 /* priority chips */
 .priority-options {
@@ -1264,6 +1442,7 @@ label, .join-label {
   gap: 8px;
   margin-bottom: 4px;
 }
+
 
 .priority-btn {
   flex: 1;
@@ -1276,10 +1455,13 @@ label, .join-label {
   transition: all var(--transition-fast);
 }
 
+
 .priority-btn.active { opacity: 1; border-color: currentColor; }
+
 
 /* location grid */
 .location-block { margin-top: 14px; }
+
 
 .location-grid {
   display: grid;
@@ -1288,8 +1470,10 @@ label, .join-label {
   margin-bottom: 10px;
 }
 
+
 .location-field { display: flex; flex-direction: column; }
 .location-field.full { margin-top: 10px; }
+
 
 .location-label {
   font-size: var(--font-size-xs);
@@ -1299,6 +1483,7 @@ label, .join-label {
   letter-spacing: 0.3px;
   margin-bottom: 5px;
 }
+
 
 .amenity-toggle {
   display: flex;
@@ -1316,11 +1501,13 @@ label, .join-label {
   transition: all var(--transition-fast);
 }
 
+
 .amenity-toggle.active {
   border-color: var(--c-800);
   background: #EAF3FB;
   color: var(--c-800);
 }
+
 
 .toggle-dot {
   width: 14px;
@@ -1331,11 +1518,13 @@ label, .join-label {
   transition: all var(--transition-fast);
 }
 
+
 .amenity-toggle.active .toggle-dot {
   background: var(--c-800);
   border-color: var(--c-800);
   box-shadow: inset 0 0 0 2.5px #EAF3FB;
 }
+
 
 .location-preview {
   margin-top: 12px;
@@ -1347,6 +1536,7 @@ label, .join-label {
   padding: 9px 12px;
 }
 
+
 /* AI duplicate-check card */
 .ai-check-card {
   display: flex;
@@ -1357,6 +1547,7 @@ label, .join-label {
   padding: 16px 18px;
   color: #fff;
 }
+
 
 .ai-check-icon {
   width: 40px;
@@ -1370,6 +1561,7 @@ label, .join-label {
   font-size: 19px;
 }
 
+
 .ai-check-text {
   flex: 1;
   min-width: 0;
@@ -1378,8 +1570,10 @@ label, .join-label {
   gap: 2px;
 }
 
+
 .ai-check-title { font-size: var(--font-size-sm); font-weight: 800; }
 .ai-check-sub { font-size: var(--font-size-xs); opacity: 0.85; line-height: 1.4; }
+
 
 .btn-ai-check {
   flex-shrink: 0;
@@ -1394,8 +1588,10 @@ label, .join-label {
   transition: opacity var(--transition-fast);
 }
 
+
 .btn-ai-check:disabled { opacity: 0.45; cursor: not-allowed; }
 .btn-ai-check:not(:disabled):hover { opacity: 0.88; }
+
 
 .btn-primary {
   width: 100%;
@@ -1409,8 +1605,10 @@ label, .join-label {
   transition: background var(--transition-fast);
 }
 
+
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-primary:not(:disabled):hover { background: var(--c-900); }
+
 
 .btn-outline {
   height: 42px;
@@ -1425,9 +1623,12 @@ label, .join-label {
   transition: all var(--transition-fast);
 }
 
+
 .btn-outline:hover:not(:disabled) { border-color: var(--c-600); background: var(--color-surface-soft); }
 
+
 .back-btn { width: 100%; margin-top: 8px; }
+
 
 .resolved-card {
   display: flex;
@@ -1439,12 +1640,15 @@ label, .join-label {
   padding: 12px 14px;
 }
 
+
 .vendor-name { font-weight: 700; color: var(--color-text-primary); }
 .slot-text { font-size: var(--font-size-xs); font-weight: 500; color: var(--color-text-muted); }
+
 
 .stars { font-size: 19px; letter-spacing: 2px; }
 .star { color: var(--color-border-strong); cursor: pointer; }
 .star.filled { color: #E0A030; }
+
 
 /* toast */
 .toast {
@@ -1465,6 +1669,7 @@ label, .join-label {
   z-index: var(--z-modal);
 }
 
+
 .toast-check {
   display: inline-flex;
   align-items: center;
@@ -1478,12 +1683,17 @@ label, .join-label {
   flex-shrink: 0;
 }
 
+
 .toast-fade-enter-active, .toast-fade-leave-active {
   transition: opacity var(--transition-fast), transform var(--transition-fast);
 }
+
 
 .toast-fade-enter-from, .toast-fade-leave-to {
   opacity: 0;
   transform: translateX(-50%) translateY(-8px);
 }
 </style>
+
+
+

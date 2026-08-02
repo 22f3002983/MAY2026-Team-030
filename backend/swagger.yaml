@@ -236,7 +236,7 @@ paths:
     post:
       tags: [complaints]
       summary: Raise a complaint (resident only)
-      description: >
+      description: |
         If title+category match an existing open/in_progress issue, this
         joins that issue instead of creating a new one (see
         /api/complaints/check-duplicates for a pre-submit AI check that
@@ -245,6 +245,15 @@ paths:
         ai_suggested_description on the resulting issue via an LLM call —
         these are advisory only and never override the submitted category
         or priority.
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-1:** As a resident, I want to submit a complaint online and see its status so that I do not have to call the secretary multiple times.
+        - **US-11:** As a secretary, I want to log every incoming complaint into one system so that no complaint gets missed.
+        
       requestBody:
         required: true
         content:
@@ -265,6 +274,16 @@ paths:
     get:
       tags: [complaints]
       summary: List complaints (resident sees own, secretary sees all)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-1:** As a resident, I want to submit a complaint online and see its status so that I do not have to call the secretary multiple times.
+        - **US-13:** As a secretary, I want to track each complaint status (open/in-progress/resolved) until the worker confirms completion.
+        
       parameters:
         - { name: status, in: query, schema: { type: string } }
         - { name: category, in: query, schema: { type: string } }
@@ -277,7 +296,7 @@ paths:
     post:
       tags: [complaints]
       summary: AI check for likely-duplicate open issues before raising a new one (resident only)
-      description: >
+      description: |
         Resident-triggered (a button, not called as-you-type). Compares the
         given title/description against up to 15 open/in_progress issues in
         the same category (excluding ones the resident already reports on)
@@ -286,6 +305,14 @@ paths:
         Returns an empty list if no OPENROUTER_API_KEY is configured, the
         call fails, or nothing matches; this is advisory only and never
         blocks raising a new issue.
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-11:** As a secretary, I want to log every incoming complaint into one system so that no complaint gets missed across multiple channels.
+        
       requestBody:
         required: true
         content:
@@ -313,6 +340,16 @@ paths:
     get:
       tags: [complaints]
       summary: Get a single complaint
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-1:** As a resident, I want to submit a complaint online and see its status.
+        - **US-13:** As a secretary, I want to track each complaint status until the worker confirms completion.
+        
       parameters:
         - { name: complaint_id, in: path, required: true, schema: { type: string } }
       responses:
@@ -324,10 +361,19 @@ paths:
     post:
       tags: [complaints]
       summary: Merge a duplicate issue into another (secretary only)
-      description: >
+      description: |
         Moves every report from the "other" issue onto the primary
         (complaint_id in the path) and deletes the other issue. Accepts
         either a CommunityIssue id or a Complaint (report) id for both.
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-11:** As a secretary, I want to log every incoming complaint into one system.
+        - **US-13:** As a secretary, I want to track each complaint status until resolved.
+        
       parameters:
         - { name: complaint_id, in: path, required: true, schema: { type: string }, description: The surviving/primary issue }
       requestBody:
@@ -349,6 +395,15 @@ paths:
     patch:
       tags: [complaints]
       summary: Assign a vendor to a complaint (secretary only)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-12:** As a secretary, I want to assign a complaint to a specific worker from a saved contacts list so that I do not have to search for the right number manually.
+        
       parameters:
         - { name: complaint_id, in: path, required: true, schema: { type: string } }
       requestBody:
@@ -371,6 +426,15 @@ paths:
     patch:
       tags: [complaints]
       summary: Update complaint status
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-13:** As a secretary, I want to track each complaint status (open/in-progress/resolved) until the worker confirms completion so that I have visibility into unresolved issues.
+        
       parameters:
         - { name: complaint_id, in: path, required: true, schema: { type: string } }
       requestBody:
@@ -391,6 +455,15 @@ paths:
     patch:
       tags: [complaints]
       summary: Submit feedback on a resolved complaint (resident only)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-8:** As a resident, I want to give quick feedback or a rating after a complaint is resolved so that the secretary knows whether the work was actually done properly.
+        
       parameters:
         - { name: complaint_id, in: path, required: true, schema: { type: string } }
       requestBody:
@@ -486,6 +559,16 @@ paths:
     get:
       tags: [notices]
       summary: List active notices
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-3:** As a resident, I want to receive advance notification about upcoming maintenance so that I can plan my day.
+        - **US-5:** As a resident, I want to see all society announcements in one place so that I do not miss updates buried in WhatsApp.
+        
       parameters:
         - { name: tag, in: query, schema: { type: string } }
         - { name: relevance, in: query, schema: { type: string } }
@@ -494,6 +577,16 @@ paths:
     post:
       tags: [notices]
       summary: Post a notice (secretary only)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-3:** As a secretary, I want to notify residents about upcoming maintenance work near their flat.
+        - **US-5:** As a secretary, I want to post society announcements in one place instead of a crowded WhatsApp group.
+        
       requestBody:
         required: true
         content:
@@ -517,6 +610,16 @@ paths:
     get:
       tags: [notices]
       summary: Get a single notice
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-3:** As a resident, I want to receive advance notification about upcoming maintenance.
+        - **US-5:** As a resident, I want to see all society announcements in one place.
+        
       parameters:
         - { name: notice_id, in: path, required: true, schema: { type: string } }
       responses:
@@ -525,6 +628,16 @@ paths:
     delete:
       tags: [notices]
       summary: Delete a notice (secretary only)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-3:** As a secretary, I want to remove outdated maintenance notices.
+        - **US-5:** As a secretary, I want to keep the announcement board clean and relevant.
+        
       parameters:
         - { name: notice_id, in: path, required: true, schema: { type: string } }
       responses:
@@ -536,6 +649,15 @@ paths:
     get:
       tags: [dues]
       summary: List dues (resident sees own, secretary sees all)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-15:** As a secretary, I want to record and view each resident's monthly due status in one place so that I can check who has paid without relying on manual records.
+        
       parameters:
         - { name: status, in: query, schema: { type: string } }
       responses:
@@ -556,6 +678,15 @@ paths:
     patch:
       tags: [dues]
       summary: Mark a due as paid (secretary only) — also generates a PDF receipt
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-15:** As a secretary, I want to mark dues as paid and generate a PDF receipt so that residents have a formal payment record.
+        
       parameters:
         - { name: due_id, in: path, required: true, schema: { type: string } }
       requestBody:
@@ -585,6 +716,15 @@ paths:
     post:
       tags: [dues]
       summary: Generate monthly dues for every resident (secretary only)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-15:** As a secretary, I want to generate monthly dues for all residents in one action so that I do not have to create individual records manually.
+        
       requestBody:
         required: true
         content:
@@ -604,6 +744,15 @@ paths:
     post:
       tags: [dues]
       summary: Send a payment reminder to residents with pending dues (secretary only)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-14:** As a secretary, I want to send maintenance fee reminders to all residents in one action so that I do not have to manually post reminder messages every month.
+        
       responses:
         '200': { description: Reminders sent }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -613,6 +762,16 @@ paths:
     get:
       tags: [emergency]
       summary: List emergency alerts (residents see Public only)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-9:** As a resident, I want to see active emergency alerts in the app.
+        - **US-16:** As a secretary, I want to view all emergency alerts sent across the society.
+        
       parameters:
         - { name: status, in: query, schema: { type: string } }
       responses:
@@ -620,6 +779,16 @@ paths:
     post:
       tags: [emergency]
       summary: Create an emergency alert (any authenticated role)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-9:** As a resident, I want to send a one-tap emergency alert (theft, fire, etc.) to the secretary and security so that I am not solely dependent on manually calling during a crisis.
+        - **US-16:** As a secretary, I want to send a single emergency alert to all residents at once so that I do not have to call each resident individually.
+        
       requestBody:
         required: true
         content:
@@ -640,6 +809,16 @@ paths:
     patch:
       tags: [emergency]
       summary: Resolve an emergency alert (secretary or security only)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-9:** As a resident, I want to know when an emergency is resolved.
+        - **US-16:** As a secretary, I want to resolve an emergency alert once the situation is handled so that residents know it is no longer active.
+        
       parameters:
         - { name: alert_id, in: path, required: true, schema: { type: string } }
       responses:
@@ -651,6 +830,15 @@ paths:
     get:
       tags: [visitors]
       summary: List visitors (resident sees own, secretary/security see all)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-6:** As a resident, I want to view my pre-registered visitors and their gate pass status.
+        
       parameters:
         - { name: status, in: query, schema: { type: string } }
       responses:
@@ -659,6 +847,15 @@ paths:
     post:
       tags: [visitors]
       summary: Pre-register a visitor (resident only)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-6:** As a resident, I want to pre-register an expected guest (name and flat number) before they arrive so that the security guard can verify them at the gate without me taking a phone call every time.
+        
       requestBody:
         required: true
         content:
@@ -682,6 +879,15 @@ paths:
     get:
       tags: [visitors]
       summary: List today's expected/checked-in visitors (secretary/security only)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-6:** As a security guard, I want to see today's expected visitors so that I can verify them efficiently at the gate.
+        
       responses:
         '200': { description: Today's visitors }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -690,6 +896,15 @@ paths:
     get:
       tags: [visitors]
       summary: List visitors currently checked in (security only)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-6:** As a security guard, I want to see who is currently inside the society so that I have an accurate live count at all times.
+        
       responses:
         '200': { description: Visitors currently on premises }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -698,6 +913,15 @@ paths:
     patch:
       tags: [visitors]
       summary: Verify a visitor pass code (security only)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-6:** As a resident, I want to pre-register an expected guest so that the security guard can verify them at the gate without me taking a phone call every time.
+        
       requestBody:
         required: true
         content:
@@ -716,6 +940,16 @@ paths:
     patch:
       tags: [visitors]
       summary: Check in a visitor (security only)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-6:** As a resident, I want my guest to be verified smoothly at the gate.
+        - **US-23:** As a visitor, I want the resident to be automatically notified when I arrive so that I do not have to call them manually.
+        
       parameters:
         - { name: visitor_id, in: path, required: true, schema: { type: string } }
       responses:
@@ -726,6 +960,15 @@ paths:
     patch:
       tags: [visitors]
       summary: Check out a visitor (security only)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-26:** As a visitor, I want a simple checkout process when I leave the society so that my exit is properly recorded instead of only my entry.
+        
       parameters:
         - { name: visitor_id, in: path, required: true, schema: { type: string } }
       responses:
@@ -736,6 +979,15 @@ paths:
     patch:
       tags: [visitors]
       summary: Reject a visitor's entry (security only)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-6:** As a resident, I want the security guard to be able to reject unauthorised visitors at the gate.
+        
       parameters:
         - { name: visitor_id, in: path, required: true, schema: { type: string } }
       responses:
@@ -747,6 +999,15 @@ paths:
     get:
       tags: [amenities]
       summary: List all amenities
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-2:** As a resident, I want to book common areas (hall, parking, etc.) online so that I do not have to visit the office or wait for the secretary.
+        
       parameters:
         - { name: type, in: query, schema: { type: string, enum: [exclusive, public, unbookable] } }
         - { name: status, in: query, schema: { type: string } }
@@ -755,6 +1016,15 @@ paths:
     post:
       tags: [amenities]
       summary: Add an amenity (secretary only)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-2:** As a secretary, I want to manage bookable amenities so that residents can reserve them online without visiting the office.
+        
       requestBody:
         required: true
         content:
@@ -856,6 +1126,15 @@ paths:
     post:
       tags: [amenities]
       summary: Book an amenity (resident only)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-2:** As a resident, I want to book common areas (hall, parking, etc.) online so that I do not have to visit the office multiple times or wait for the secretary to pick the call up.
+        
       parameters:
         - { name: amenity_id, in: path, required: true, schema: { type: string } }
       requestBody:
@@ -891,6 +1170,15 @@ paths:
     get:
       tags: [amenities]
       summary: List bookings (resident sees own, secretary sees all)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-2:** As a resident, I want to book common areas online and track my booking status.
+        
       parameters:
         - { name: status, in: query, schema: { type: string } }
       responses:
@@ -901,6 +1189,15 @@ paths:
     patch:
       tags: [amenities]
       summary: Approve a pending booking, with time/date-range conflict check (secretary only)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-2:** As a secretary, I want to approve amenity bookings so that residents can use common areas without conflict.
+        
       parameters:
         - { name: booking_id, in: path, required: true, schema: { type: string } }
       responses:
@@ -913,6 +1210,15 @@ paths:
     patch:
       tags: [amenities]
       summary: Reject a booking (secretary only)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-2:** As a secretary, I want to reject conflicting amenity bookings to prevent double-booking.
+        
       parameters:
         - { name: booking_id, in: path, required: true, schema: { type: string } }
       requestBody:
@@ -1000,13 +1306,21 @@ paths:
     post:
       tags: [service-requests]
       summary: Live AI category suggestion while describing a service request (resident only)
-      description: >
+      description: |
         Explicitly triggered by a button in the UI (not called as-you-type,
         to avoid guessing from half-typed text and to avoid the suggestion
         flickering as someone pauses mid-sentence). Doesn't persist
         anything — purely advisory for pre-filling the category field.
         Returns category: null if no OPENROUTER_API_KEY is configured, the
         call fails, or the description is empty.
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-7:** As a resident, I want to raise a service request and get an AI-suggested category so I can select the correct vendor type quickly.
+        
       requestBody:
         required: true
         content:
@@ -1031,6 +1345,15 @@ paths:
     post:
       tags: [service-requests]
       summary: Book a home service with a vendor (resident only)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-7:** As a resident, I want to raise an electrician or plumber request in the app and see which worker is assigned, their contact details, and when the job is completed so that I do not have to call multiple times.
+        
       requestBody:
         required: true
         content:
@@ -1051,6 +1374,15 @@ paths:
     get:
       tags: [service-requests]
       summary: List the current resident's home service requests
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-7:** As a resident, I want to track my service requests and see which vendor is assigned.
+        
       parameters:
         - { name: status, in: query, schema: { type: string } }
       responses:
@@ -1083,6 +1415,15 @@ paths:
     patch:
       tags: [service-requests]
       summary: Cancel a scheduled service request
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-7:** As a resident, I want to cancel a service request if the issue is resolved or no longer needed.
+        
       parameters:
         - { name: request_id, in: path, required: true, schema: { type: string } }
       responses:
@@ -1094,6 +1435,16 @@ paths:
     patch:
       tags: [service-requests]
       summary: Mark a service request complete and record vendor payment
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-7:** As a resident, I want to see when a job is completed.
+        - **US-19:** As a plumber, I want to receive a notification when the resident marks the complaint as completed so that I know the job has been officially closed.
+        
       parameters:
         - { name: request_id, in: path, required: true, schema: { type: string } }
       requestBody:
@@ -1247,6 +1598,15 @@ paths:
     post:
       tags: [document-requests]
       summary: Submit a document request (resident only)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-4:** As a resident, I want to request society documents (NOC, payment receipts) through the app so that I do not have to visit the office, submit a written letter, and wait days for a signature.
+        
       requestBody:
         required: true
         content:
@@ -1264,6 +1624,15 @@ paths:
     get:
       tags: [document-requests]
       summary: List document requests (resident sees own, secretary sees all)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-4:** As a resident, I want to track the status of my document request so that I know when it is ready for download.
+        
       parameters:
         - { name: status, in: query, schema: { type: string } }
       responses:
@@ -1274,6 +1643,15 @@ paths:
     patch:
       tags: [document-requests]
       summary: Upload the requested document (secretary only)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-4:** As a secretary, I want to fulfil resident document requests by uploading the file so that residents can download without visiting the office.
+        
       parameters:
         - { name: request_id, in: path, required: true, schema: { type: string } }
       requestBody:
@@ -1295,6 +1673,15 @@ paths:
     get:
       tags: [document-requests]
       summary: Download the uploaded document
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-4:** As a resident, I want to request society documents (NOC, payment receipts) through the app so that I do not have to visit the office.
+        
       parameters:
         - { name: request_id, in: path, required: true, schema: { type: string } }
       responses:
@@ -1306,6 +1693,15 @@ paths:
     patch:
       tags: [document-requests]
       summary: Mark a document request delivered (secretary only)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-4:** As a secretary, I want to mark document requests as delivered once the resident has received them.
+        
       parameters:
         - { name: request_id, in: path, required: true, schema: { type: string } }
       responses:
@@ -1317,6 +1713,15 @@ paths:
     post:
       tags: [profile-requests]
       summary: Submit a profile-update request (resident only)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-10:** As a resident, I want to update my flat's occupant details and contact number myself in the app so that I do not have to call the secretary every time someone moves in or out.
+        
       requestBody:
         required: true
         content:
@@ -1328,6 +1733,15 @@ paths:
     get:
       tags: [profile-requests]
       summary: List profile-update requests (secretary only)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-10:** As a secretary, I want to review and approve resident profile update requests so that society records stay accurate.
+        
       responses:
         '200': { description: List of requests }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -1336,6 +1750,15 @@ paths:
     patch:
       tags: [profile-requests]
       summary: Approve a profile-update request (secretary only)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-10:** As a secretary, I want to approve resident profile changes so that the society has accurate occupant and contact information.
+        
       parameters:
         - { name: request_id, in: path, required: true, schema: { type: string } }
       responses:
@@ -1346,6 +1769,15 @@ paths:
     patch:
       tags: [profile-requests]
       summary: Reject a profile-update request (secretary only)
+      description: |
+        
+        
+        ---
+        
+        **User Story Mapping**
+        
+        - **US-10:** As a secretary, I want to reject incorrect profile update requests to maintain data integrity.
+        
       parameters:
         - { name: request_id, in: path, required: true, schema: { type: string } }
       responses:

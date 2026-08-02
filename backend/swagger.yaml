@@ -1,0 +1,1353 @@
+openapi: 3.0.0
+info:
+  title: Niwaas RWA Management API
+  description: >
+    REST API for Niwaas — a residential welfare association (RWA) management
+    platform covering complaints, vendors, dues, notices, emergency alerts,
+    visitors, amenities, home services, electricity bills, society funds,
+    document requests and profile-update requests.
+  version: "1.0.0"
+servers:
+  - url: http://localhost:5000
+    description: Local development server
+
+tags:
+  - name: auth
+    description: Registration, login/logout, session, invites and onboarding
+  - name: complaints
+    description: Resident complaints and vendor assignment
+  - name: vendors
+    description: Society-empanelled vendor directory
+  - name: notices
+    description: Secretary-posted notices/announcements
+  - name: dues
+    description: Monthly maintenance dues and receipts
+  - name: emergency
+    description: Emergency alert broadcasts
+  - name: visitors
+    description: Visitor pre-registration and gate check-in/out
+  - name: amenities
+    description: Amenity catalog and bookings
+  - name: summary
+    description: Role-specific dashboard summaries
+  - name: notifications
+    description: In-app notifications
+  - name: service-requests
+    description: Home Services — resident-booked personal vendor jobs
+  - name: electricity-bills
+    description: Society-wide monthly electricity bills
+  - name: funds
+    description: Society fund balances, split configuration and ledger
+  - name: document-requests
+    description: Resident document requests (NOC, receipts, etc.)
+  - name: profile-requests
+    description: Resident profile-update approval workflow
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: session
+      description: Flask-Login session cookie set on successful /api/auth/login
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+    Message:
+      type: object
+      properties:
+        message:
+          type: string
+
+  responses:
+    BadRequest:
+      description: Invalid or missing input
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Not logged in
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Logged in but not permitted for this role
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Request conflicts with existing state
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+security:
+  - cookieAuth: []
+
+paths:
+
+  # ── auth ──────────────────────────────────────────────────────
+  /api/auth/ping:
+    get:
+      tags: [auth]
+      summary: Health check for the auth blueprint
+      security: []
+      responses:
+        '200': { description: OK }
+
+  /api/auth/register:
+    post:
+      tags: [auth]
+      summary: Register a new user (resident, secretary or security)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, role, name]
+              properties:
+                email: { type: string }
+                password: { type: string }
+                role: { type: string, enum: [resident, secretary, security] }
+                name: { type: string }
+                phone: { type: string }
+                flat_id: { type: string }
+                occupant_type: { type: string, enum: [owner, tenant] }
+                household_size: { type: integer }
+      responses:
+        '201': { description: User created }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { description: Email already registered }
+
+  /api/auth/login:
+    post:
+      tags: [auth]
+      summary: Log in with email and password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string }
+                password: { type: string }
+      responses:
+        '200': { description: Login successful, session cookie set }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { description: Invalid email or password }
+        '403': { description: Account deactivated }
+
+  /api/auth/logout:
+    post:
+      tags: [auth]
+      summary: Log out and clear the session
+      responses:
+        '200': { $ref: '#/components/responses/BadRequest' }
+
+  /api/auth/me:
+    get:
+      tags: [auth]
+      summary: Get the current logged-in user
+      responses:
+        '200': { description: Current user }
+        '302': { description: Not authenticated — redirected to login }
+
+  /api/auth/residents:
+    get:
+      tags: [auth]
+      summary: List all residents (secretary only)
+      responses:
+        '200': { description: List of residents }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/auth/invite:
+    post:
+      tags: [auth]
+      summary: (Re)generate an invite code for a resident (secretary only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resident_id]
+              properties:
+                resident_id: { type: string }
+      responses:
+        '200': { description: New invite code issued }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/auth/onboard:
+    post:
+      tags: [auth]
+      summary: Resident redeems invite code and sets a permanent password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [invite_code, new_password]
+              properties:
+                invite_code: { type: string }
+                new_password: { type: string }
+      responses:
+        '200': { description: Onboarding complete }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/auth/change-password:
+    post:
+      tags: [auth]
+      summary: Change the current user's password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password: { type: string }
+                new_password: { type: string }
+      responses:
+        '200': { description: Password updated }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { description: Current password incorrect }
+
+  # ── complaints ────────────────────────────────────────────────
+  /api/complaints:
+    post:
+      tags: [complaints]
+      summary: Raise a complaint (resident only)
+      description: >
+        If title+category match an existing open/in_progress issue, this
+        joins that issue instead of creating a new one (see
+        /api/complaints/check-duplicates for a pre-submit AI check that
+        catches near-duplicates worded differently). The server also
+        populates ai_suggested_category, ai_suggested_priority and
+        ai_suggested_description on the resulting issue via an LLM call —
+        these are advisory only and never override the submitted category
+        or priority.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, description, category, type]
+              properties:
+                title: { type: string }
+                description: { type: string }
+                category: { type: string, enum: [plumbing, electrical, cleaning, carpentry, security, gardening, pest_control, other] }
+                type: { type: string, enum: [personal, common_area] }
+                priority: { type: string, enum: [high, medium, low] }
+      responses:
+        '201': { description: Complaint raised }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    get:
+      tags: [complaints]
+      summary: List complaints (resident sees own, secretary sees all)
+      parameters:
+        - { name: status, in: query, schema: { type: string } }
+        - { name: category, in: query, schema: { type: string } }
+        - { name: priority, in: query, schema: { type: string } }
+      responses:
+        '200': { description: List of complaints }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/complaints/check-duplicates:
+    post:
+      tags: [complaints]
+      summary: AI check for likely-duplicate open issues before raising a new one (resident only)
+      description: >
+        Resident-triggered (a button, not called as-you-type). Compares the
+        given title/description against up to 15 open/in_progress issues in
+        the same category (excluding ones the resident already reports on)
+        using an LLM, and returns which existing issue ids look like the
+        same underlying problem — even when worded completely differently.
+        Returns an empty list if no OPENROUTER_API_KEY is configured, the
+        call fails, or nothing matches; this is advisory only and never
+        blocks raising a new issue.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, description, category]
+              properties:
+                title: { type: string }
+                description: { type: string }
+                category: { type: string, enum: [plumbing, electrical, cleaning, carpentry, security, gardening, pest_control, other] }
+      responses:
+        '200':
+          description: Matching issue ids (possibly empty)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  matches: { type: array, items: { type: string } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/complaints/{complaint_id}:
+    get:
+      tags: [complaints]
+      summary: Get a single complaint
+      parameters:
+        - { name: complaint_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Complaint detail }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/complaints/{complaint_id}/merge:
+    post:
+      tags: [complaints]
+      summary: Merge a duplicate issue into another (secretary only)
+      description: >
+        Moves every report from the "other" issue onto the primary
+        (complaint_id in the path) and deletes the other issue. Accepts
+        either a CommunityIssue id or a Complaint (report) id for both.
+      parameters:
+        - { name: complaint_id, in: path, required: true, schema: { type: string }, description: The surviving/primary issue }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [other_issue_id]
+              properties:
+                other_issue_id: { type: string, description: The issue to merge in and delete }
+      responses:
+        '200': { description: Issues merged }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/complaints/{complaint_id}/assign:
+    patch:
+      tags: [complaints]
+      summary: Assign a vendor to a complaint (secretary only)
+      parameters:
+        - { name: complaint_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [vendor_id]
+              properties:
+                vendor_id: { type: string }
+                vendor_start_time: { type: string, format: date-time, description: "Optional — ISO 8601 UTC instant (e.g. from JS toISOString())" }
+                vendor_end_time: { type: string, format: date-time, description: "Optional — ISO 8601 UTC instant" }
+      responses:
+        '200': { description: Vendor assigned }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/complaints/{complaint_id}/status:
+    patch:
+      tags: [complaints]
+      summary: Update complaint status
+      parameters:
+        - { name: complaint_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [open, in_progress, resolved, closed] }
+      responses:
+        '200': { description: Status updated }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/complaints/{complaint_id}/feedback:
+    patch:
+      tags: [complaints]
+      summary: Submit feedback on a resolved complaint (resident only)
+      parameters:
+        - { name: complaint_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [feedback_rating]
+              properties:
+                feedback_rating: { type: integer, minimum: 1, maximum: 5 }
+                feedback_comment: { type: string }
+      responses:
+        '200': { description: Feedback submitted }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ── vendors ───────────────────────────────────────────────────
+  /api/vendors:
+    get:
+      tags: [vendors]
+      summary: List vendors
+      parameters:
+        - { name: category, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, default: active } }
+      responses:
+        '200': { description: List of vendors }
+    post:
+      tags: [vendors]
+      summary: Add a vendor (secretary only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, phone, category]
+              properties:
+                name: { type: string }
+                phone: { type: string }
+                category: { type: string, enum: [plumber, electrician, carpenter, cleaner, other] }
+                description: { type: string }
+                working_hours: { type: string }
+                is_salaried: { type: boolean }
+                salary: { type: number }
+      responses:
+        '201': { description: Vendor added }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/vendors/{vendor_id}:
+    get:
+      tags: [vendors]
+      summary: Get a single vendor
+      parameters:
+        - { name: vendor_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Vendor detail }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [vendors]
+      summary: Edit a vendor (secretary only)
+      parameters:
+        - { name: vendor_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                phone: { type: string }
+                category: { type: string }
+                description: { type: string }
+                working_hours: { type: string }
+                status: { type: string, enum: [active, inactive] }
+                is_salaried: { type: boolean }
+                salary: { type: number }
+      responses:
+        '200': { description: Vendor updated }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [vendors]
+      summary: Remove a vendor (secretary only)
+      parameters:
+        - { name: vendor_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Vendor removed }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ── notices ───────────────────────────────────────────────────
+  /api/notices:
+    get:
+      tags: [notices]
+      summary: List active notices
+      parameters:
+        - { name: tag, in: query, schema: { type: string } }
+        - { name: relevance, in: query, schema: { type: string } }
+      responses:
+        '200': { description: List of notices }
+    post:
+      tags: [notices]
+      summary: Post a notice (secretary only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, description, expiry_date]
+              properties:
+                title: { type: string }
+                description: { type: string }
+                tag: { type: string, enum: [General, Maintenance, Security, Event, Urgent] }
+                priority: { type: string, enum: [high, medium, low] }
+                relevance: { type: string }
+                expiry_date: { type: string, format: date }
+      responses:
+        '201': { description: Notice posted }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/notices/{notice_id}:
+    get:
+      tags: [notices]
+      summary: Get a single notice
+      parameters:
+        - { name: notice_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Notice detail }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [notices]
+      summary: Delete a notice (secretary only)
+      parameters:
+        - { name: notice_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Notice deleted }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ── dues ──────────────────────────────────────────────────────
+  /api/dues:
+    get:
+      tags: [dues]
+      summary: List dues (resident sees own, secretary sees all)
+      parameters:
+        - { name: status, in: query, schema: { type: string } }
+      responses:
+        '200': { description: List of dues }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/dues/{due_id}:
+    get:
+      tags: [dues]
+      summary: Get a single due
+      parameters:
+        - { name: due_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Due detail }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/dues/{due_id}/pay:
+    patch:
+      tags: [dues]
+      summary: Mark a due as paid (secretary only) — also generates a PDF receipt
+      parameters:
+        - { name: due_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { amount_paid: { type: number } }
+      responses:
+        '200': { description: Payment recorded }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/dues/{due_id}/receipt:
+    get:
+      tags: [dues]
+      summary: Download the PDF receipt for a paid due
+      parameters:
+        - { name: due_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: PDF receipt
+          content:
+            application/pdf: { schema: { type: string, format: binary } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/dues/generate:
+    post:
+      tags: [dues]
+      summary: Generate monthly dues for every resident (secretary only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [month, amount_due]
+              properties:
+                month: { type: string, format: date, description: "First day of the month, YYYY-MM-DD" }
+                amount_due: { type: number }
+      responses:
+        '201': { description: Dues generated }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/dues/reminder:
+    post:
+      tags: [dues]
+      summary: Send a payment reminder to residents with pending dues (secretary only)
+      responses:
+        '200': { description: Reminders sent }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ── emergency ─────────────────────────────────────────────────
+  /api/emergency:
+    get:
+      tags: [emergency]
+      summary: List emergency alerts (residents see Public only)
+      parameters:
+        - { name: status, in: query, schema: { type: string } }
+      responses:
+        '200': { description: List of alerts }
+    post:
+      tags: [emergency]
+      summary: Create an emergency alert (any authenticated role)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message: { type: string }
+                type: { type: string, enum: [Public, Private], default: Public }
+                location_info: { type: string }
+                severity: { type: string, enum: [low, medium, high, critical] }
+      responses:
+        '201': { description: Alert created }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /api/emergency/{alert_id}/resolve:
+    patch:
+      tags: [emergency]
+      summary: Resolve an emergency alert (secretary or security only)
+      parameters:
+        - { name: alert_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Alert resolved }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ── visitors ──────────────────────────────────────────────────
+  /api/visitors:
+    get:
+      tags: [visitors]
+      summary: List visitors (resident sees own, secretary/security see all)
+      parameters:
+        - { name: status, in: query, schema: { type: string } }
+      responses:
+        '200': { description: List of visitors }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [visitors]
+      summary: Pre-register a visitor (resident only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                phone: { type: string }
+                expected_date: { type: string, format: date }
+                expected_time: { type: string, example: "14:30" }
+                vehicle_number: { type: string }
+                reason: { type: string }
+      responses:
+        '201': { description: Visitor pre-registered, pass_code returned }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/visitors/today:
+    get:
+      tags: [visitors]
+      summary: List today's expected/checked-in visitors (secretary/security only)
+      responses:
+        '200': { description: Today's visitors }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/visitors/inside:
+    get:
+      tags: [visitors]
+      summary: List visitors currently checked in (security only)
+      responses:
+        '200': { description: Visitors currently on premises }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/visitors/verify:
+    patch:
+      tags: [visitors]
+      summary: Verify a visitor pass code (security only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pass_code]
+              properties: { pass_code: { type: string } }
+      responses:
+        '200': { description: Pass code verified }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Invalid or expired pass code }
+
+  /api/visitors/{visitor_id}/checkin:
+    patch:
+      tags: [visitors]
+      summary: Check in a visitor (security only)
+      parameters:
+        - { name: visitor_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Visitor checked in }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/visitors/{visitor_id}/checkout:
+    patch:
+      tags: [visitors]
+      summary: Check out a visitor (security only)
+      parameters:
+        - { name: visitor_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Visitor checked out }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/visitors/{visitor_id}/reject:
+    patch:
+      tags: [visitors]
+      summary: Reject a visitor's entry (security only)
+      parameters:
+        - { name: visitor_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Visitor entry rejected }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ── amenities ─────────────────────────────────────────────────
+  /api/amenities:
+    get:
+      tags: [amenities]
+      summary: List all amenities
+      parameters:
+        - { name: type, in: query, schema: { type: string, enum: [exclusive, public, unbookable] } }
+        - { name: status, in: query, schema: { type: string } }
+      responses:
+        '200': { description: List of amenities }
+    post:
+      tags: [amenities]
+      summary: Add an amenity (secretary only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, type]
+              properties:
+                name: { type: string }
+                type: { type: string, enum: [exclusive, public, unbookable] }
+                booking_type: { type: string, enum: [automatic, approval_required] }
+                description: { type: string }
+                icon: { type: string }
+                location: { type: string }
+                capacity: { type: integer }
+                is_air_conditioned: { type: boolean }
+                is_decoratable: { type: boolean }
+                features: { type: array, items: { type: string } }
+                special_booking: { type: boolean }
+                pricing:
+                  type: object
+                  properties:
+                    type: { type: string, enum: [hourly, daily] }
+                    rate: { type: number }
+                    min_units: { type: integer }
+                    unit_label: { type: string }
+      responses:
+        '201': { description: Amenity added }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/amenities/{amenity_id}:
+    get:
+      tags: [amenities]
+      summary: Get a single amenity
+      parameters:
+        - { name: amenity_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Amenity detail }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [amenities]
+      summary: Edit amenity fields (secretary only)
+      parameters:
+        - { name: amenity_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200': { description: Amenity updated }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      tags: [amenities]
+      summary: Delete an amenity (secretary only) — blocked if active bookings exist
+      parameters:
+        - { name: amenity_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Amenity deleted }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/amenities/{amenity_id}/status:
+    patch:
+      tags: [amenities]
+      summary: Update amenity status — available/booked/closed/maintenance/inactive (secretary only)
+      parameters:
+        - { name: amenity_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [available, booked, closed, maintenance, inactive] }
+                status_until: { type: string, format: date }
+      responses:
+        '200': { description: Status updated }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/amenities/{amenity_id}/availability:
+    get:
+      tags: [amenities]
+      summary: Privacy-safe availability check for a date/time range
+      parameters:
+        - { name: amenity_id, in: path, required: true, schema: { type: string } }
+        - { name: date, in: query, required: true, schema: { type: string, format: date } }
+        - { name: end_date, in: query, schema: { type: string, format: date } }
+        - { name: start_time, in: query, schema: { type: string, example: "18:00" } }
+        - { name: end_time, in: query, schema: { type: string, example: "20:00" } }
+      responses:
+        '200': { description: "{ available: bool, message: string }" }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /api/amenities/{amenity_id}/book:
+    post:
+      tags: [amenities]
+      summary: Book an amenity (resident only)
+      parameters:
+        - { name: amenity_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [date]
+              properties:
+                date: { type: string, format: date }
+                end_date: { type: string, format: date }
+                start_time: { type: string, example: "18:00" }
+                end_time: { type: string, example: "21:00" }
+                event_type: { type: string }
+                guests: { type: integer }
+                reason: { type: string }
+      responses:
+        '201': { description: Booking created (pending or auto-approved) }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/amenities/{amenity_id}/bookings:
+    get:
+      tags: [amenities]
+      summary: List bookings for one amenity (secretary sees full history)
+      parameters:
+        - { name: amenity_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: List of bookings for this amenity }
+
+  /api/amenities/bookings:
+    get:
+      tags: [amenities]
+      summary: List bookings (resident sees own, secretary sees all)
+      parameters:
+        - { name: status, in: query, schema: { type: string } }
+      responses:
+        '200': { description: List of bookings }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/amenities/bookings/{booking_id}/approve:
+    patch:
+      tags: [amenities]
+      summary: Approve a pending booking, with time/date-range conflict check (secretary only)
+      parameters:
+        - { name: booking_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Booking approved }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Conflicts with an existing approved booking }
+
+  /api/amenities/bookings/{booking_id}/reject:
+    patch:
+      tags: [amenities]
+      summary: Reject a booking (secretary only)
+      parameters:
+        - { name: booking_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { reason: { type: string } }
+      responses:
+        '200': { description: Booking rejected }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/amenities/bookings/{booking_id}/cancel:
+    patch:
+      tags: [amenities]
+      summary: Cancel your own booking (resident only)
+      parameters:
+        - { name: booking_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Booking cancelled }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/amenities/bookings/{booking_id}/pay:
+    patch:
+      tags: [amenities]
+      summary: Pay for an approved booking (resident only) — splits payment into society funds
+      parameters:
+        - { name: booking_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Payment received }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ── summary ───────────────────────────────────────────────────
+  /api/summary/resident:
+    get:
+      tags: [summary]
+      summary: Resident dashboard summary
+      responses:
+        '200': { description: Summary metrics for the logged-in resident }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/summary/secretary:
+    get:
+      tags: [summary]
+      summary: Secretary dashboard summary
+      responses:
+        '200': { description: Society-wide summary metrics }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ── notifications ─────────────────────────────────────────────
+  /api/notifications:
+    get:
+      tags: [notifications]
+      summary: List the current user's recent notifications
+      responses:
+        '200': { description: List of notifications }
+
+  /api/notifications/unread-count:
+    get:
+      tags: [notifications]
+      summary: Get the current user's unread notification count
+      responses:
+        '200': { description: "{ count: integer }" }
+
+  /api/notifications/{notification_id}/read:
+    patch:
+      tags: [notifications]
+      summary: Mark one notification as read
+      parameters:
+        - { name: notification_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Notification marked read }
+
+  /api/notifications/read-all:
+    patch:
+      tags: [notifications]
+      summary: Mark all of the current user's notifications as read
+      responses:
+        '200': { description: All notifications marked read }
+
+  # ── service-requests (Home Services) ─────────────────────────
+  /api/service-requests/suggest-category:
+    post:
+      tags: [service-requests]
+      summary: Live AI category suggestion while describing a service request (resident only)
+      description: >
+        Explicitly triggered by a button in the UI (not called as-you-type,
+        to avoid guessing from half-typed text and to avoid the suggestion
+        flickering as someone pauses mid-sentence). Doesn't persist
+        anything — purely advisory for pre-filling the category field.
+        Returns category: null if no OPENROUTER_API_KEY is configured, the
+        call fails, or the description is empty.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [description]
+              properties:
+                description: { type: string }
+      responses:
+        '200':
+          description: Suggested category (nullable)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  category: { type: string, enum: [plumber, electrician, carpenter, cleaner, other], nullable: true }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/service-requests:
+    post:
+      tags: [service-requests]
+      summary: Book a home service with a vendor (resident only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [category, description, vendor_id, scheduled_date, scheduled_time]
+              properties:
+                category: { type: string, enum: [plumber, electrician, carpenter, cleaner, other] }
+                description: { type: string }
+                vendor_id: { type: string }
+                scheduled_date: { type: string, format: date }
+                scheduled_time: { type: string, example: "11:00" }
+      responses:
+        '201': { description: Service booked }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    get:
+      tags: [service-requests]
+      summary: List the current resident's home service requests
+      parameters:
+        - { name: status, in: query, schema: { type: string } }
+      responses:
+        '200': { description: List of service requests }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/service-requests/{request_id}:
+    patch:
+      tags: [service-requests]
+      summary: Reschedule a scheduled service request
+      parameters:
+        - { name: request_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                category: { type: string }
+                description: { type: string }
+                vendor_id: { type: string }
+                scheduled_date: { type: string, format: date }
+                scheduled_time: { type: string }
+      responses:
+        '200': { description: Request rescheduled }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/service-requests/{request_id}/cancel:
+    patch:
+      tags: [service-requests]
+      summary: Cancel a scheduled service request
+      parameters:
+        - { name: request_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Request cancelled }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/service-requests/{request_id}/complete:
+    patch:
+      tags: [service-requests]
+      summary: Mark a service request complete and record vendor payment
+      parameters:
+        - { name: request_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount]
+              properties: { amount: { type: number } }
+      responses:
+        '200': { description: Marked complete and paid }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/service-requests/{request_id}/rate:
+    patch:
+      tags: [service-requests]
+      summary: Rate a completed service request
+      parameters:
+        - { name: request_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rating]
+              properties: { rating: { type: integer, minimum: 1, maximum: 5 } }
+      responses:
+        '200': { description: Rating recorded }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ── electricity-bills ─────────────────────────────────────────
+  /api/electricity-bills:
+    get:
+      tags: [electricity-bills]
+      summary: List all posted electricity bills (society-wide, visible to all roles)
+      responses:
+        '200': { description: List of bills }
+    post:
+      tags: [electricity-bills]
+      summary: Post the month's electricity bill (secretary only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [month, total_units, total_amount]
+              properties:
+                month: { type: string, format: date, description: "First day of the month" }
+                total_units: { type: number }
+                total_amount: { type: number }
+                filename: { type: string }
+                file_data: { type: string, description: "base64-encoded file (optional)" }
+      responses:
+        '201': { description: Bill posted (with computed AI usage analysis) }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: A bill for this month already exists }
+
+  /api/electricity-bills/{bill_id}:
+    delete:
+      tags: [electricity-bills]
+      summary: Delete a posted bill (secretary only)
+      parameters:
+        - { name: bill_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Bill deleted }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/electricity-bills/{bill_id}/download:
+    get:
+      tags: [electricity-bills]
+      summary: Download the uploaded bill file
+      parameters:
+        - { name: bill_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Bill file }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ── funds ─────────────────────────────────────────────────────
+  /api/funds:
+    get:
+      tags: [funds]
+      summary: List society fund balances (secretary only)
+      responses:
+        '200': { description: Fund balances and total }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/funds/config:
+    get:
+      tags: [funds]
+      summary: List the fund split configuration (secretary only)
+      responses:
+        '200': { description: Fund split percentages }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/funds/config/{config_id}:
+    patch:
+      tags: [funds]
+      summary: Edit a fund's split percentage — active percentages must sum to 100 (secretary only)
+      parameters:
+        - { name: config_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                percentage: { type: number }
+                is_active: { type: boolean }
+      responses:
+        '200': { description: Configuration updated }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/funds/transactions:
+    get:
+      tags: [funds]
+      summary: List fund ledger transactions (secretary only)
+      parameters:
+        - { name: fund_name, in: query, schema: { type: string } }
+      responses:
+        '200': { description: List of transactions }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [funds]
+      summary: Record a manual credit/debit transaction (secretary only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fund_name, type, amount, description]
+              properties:
+                fund_name: { type: string }
+                type: { type: string, enum: [credit, debit] }
+                amount: { type: number }
+                description: { type: string }
+      responses:
+        '201': { description: Transaction recorded }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ── document-requests ─────────────────────────────────────────
+  /api/document-requests:
+    post:
+      tags: [document-requests]
+      summary: Submit a document request (resident only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type]
+              properties:
+                type: { type: string, enum: [noc, payment_receipt, other] }
+                reason: { type: string }
+      responses:
+        '201': { description: Request submitted }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    get:
+      tags: [document-requests]
+      summary: List document requests (resident sees own, secretary sees all)
+      parameters:
+        - { name: status, in: query, schema: { type: string } }
+      responses:
+        '200': { description: List of requests }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/document-requests/{request_id}/upload:
+    patch:
+      tags: [document-requests]
+      summary: Upload the requested document (secretary only)
+      parameters:
+        - { name: request_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [filename, file_data]
+              properties:
+                filename: { type: string }
+                file_data: { type: string, description: "base64-encoded file" }
+      responses:
+        '200': { description: Document uploaded and marked ready }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/document-requests/{request_id}/download:
+    get:
+      tags: [document-requests]
+      summary: Download the uploaded document
+      parameters:
+        - { name: request_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Document file }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/document-requests/{request_id}/deliver:
+    patch:
+      tags: [document-requests]
+      summary: Mark a document request delivered (secretary only)
+      parameters:
+        - { name: request_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Marked delivered }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ── profile-requests ──────────────────────────────────────────
+  /api/profile-requests:
+    post:
+      tags: [profile-requests]
+      summary: Submit a profile-update request (resident only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '201': { description: Request submitted }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    get:
+      tags: [profile-requests]
+      summary: List profile-update requests (secretary only)
+      responses:
+        '200': { description: List of requests }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/profile-requests/{request_id}/approve:
+    patch:
+      tags: [profile-requests]
+      summary: Approve a profile-update request (secretary only)
+      parameters:
+        - { name: request_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Request approved and applied }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/profile-requests/{request_id}/reject:
+    patch:
+      tags: [profile-requests]
+      summary: Reject a profile-update request (secretary only)
+      parameters:
+        - { name: request_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Request rejected }
+        '403': { $ref: '#/components/responses/Forbidden' }

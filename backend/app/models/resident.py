@@ -14,6 +14,11 @@ class Resident(db.Model):
     invite_code_expiry  = db.Column(db.DateTime,    nullable=True)
     is_onboarded        = db.Column(db.Boolean, default=False)
     onboarded_at        = db.Column(db.DateTime, nullable=True)
+    
+    vehicle1_name        = db.Column(db.String(100), nullable=True)
+    vehicle1_number      = db.Column(db.String(20),  nullable=True)
+    vehicle2_name        = db.Column(db.String(100), nullable=True)
+    vehicle2_number      = db.Column(db.String(20),  nullable=True)
     created_at          = db.Column(db.DateTime, default=__import__('datetime').datetime.utcnow)
 
     complaints          = db.relationship('Complaint',         backref='resident', lazy=True)

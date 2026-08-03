@@ -41,6 +41,10 @@ def user_to_dict(user):
         base['occupant_type']  = user.resident.occupant_type
         base['household_size'] = user.resident.household_size
         base['is_onboarded']   = user.resident.is_onboarded
+        base['vehicle1_name']    = user.resident.vehicle1_name
+        base['vehicle1_number']  = user.resident.vehicle1_number
+        base['vehicle2_name']    = user.resident.vehicle2_name
+        base['vehicle2_number']  = user.resident.vehicle2_number
     elif user.role == 'secretary' and user.secretary:
         base['name'] = user.secretary.name
     elif user.role == 'security' and user.security:

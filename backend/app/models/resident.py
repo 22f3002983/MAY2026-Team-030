@@ -14,10 +14,6 @@ class Resident(db.Model):
     invite_code_expiry  = db.Column(db.DateTime,    nullable=True)
     is_onboarded        = db.Column(db.Boolean, default=False)
     onboarded_at        = db.Column(db.DateTime, nullable=True)
-<<<<<<< HEAD
-    
-=======
->>>>>>> 07bc23b03229b5b049479bc5a07ab5775e4807bd
     vehicle1_name        = db.Column(db.String(100), nullable=True)
     vehicle1_number      = db.Column(db.String(20),  nullable=True)
     vehicle2_name        = db.Column(db.String(100), nullable=True)

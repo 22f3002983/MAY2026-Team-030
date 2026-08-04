@@ -158,6 +158,11 @@ def download_document(request_id):
     if current_user.role == 'resident':
         if not current_user.resident or doc_request.resident_id != current_user.resident.id:
             return jsonify({'error': 'Unauthorized'}), 403
+        # A resident can only download once the secretary has explicitly
+        # marked it delivered — 'ready' means the file exists and the
+        # secretary can preview/verify it, not that it's been handed over yet.
+        if doc_request.status != 'delivered':
+            return jsonify({'error': 'This document is not yet marked as delivered'}), 403
     elif current_user.role != 'secretary':
         return jsonify({'error': 'Unauthorized'}), 403
 

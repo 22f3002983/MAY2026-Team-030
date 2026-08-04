@@ -167,7 +167,7 @@ function downloadFile(r) {
             <div class="request-bottom">
               <span class="request-date">Requested {{ formatDate(r.requested_at) }}</span>
               <button
-                v-if="r.status === 'ready' || r.status === 'delivered'"
+                v-if="r.status === 'delivered'"
                 class="download-link"
                 @click="downloadFile(r)"
               >Download</button>

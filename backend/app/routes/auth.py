@@ -6,6 +6,7 @@ from app.models.resident import Resident
 from app.models.secretary import Secretary
 from app.models.security import Security
 from app.models.flat import Flat
+from app.routes.dues import generate_due_for_new_resident, compute_outstanding
 from datetime import datetime, timedelta
 import uuid
 import secrets
@@ -53,7 +54,7 @@ def user_to_dict(user):
     return base
 
 
-# ── routes ───────────────────────────────────────────────────────────────────
+# ── routes ──────────────────────────────────────────────────────────────────
 
 @auth_bp.route('/ping')
 def ping():
@@ -170,6 +171,8 @@ def register():
 
     db.session.commit()
 
+    if role == 'resident':
+        generate_due_for_new_resident(profile)
     response = {
         'message': 'User registered successfully',
         'user':    user_to_dict(user),
@@ -273,13 +276,8 @@ def list_residents():
 
     result = []
     for r in residents:
-        pending_due = 0
         try:
-            pending_due = sum(
-                float(d.amount_due) - float(d.amount_paid)
-                for d in r.dues
-                if float(d.amount_paid) < float(d.amount_due)
-            )
+            pending_due = compute_outstanding(r)
         except Exception:
             pending_due = None
 
@@ -294,6 +292,7 @@ def list_residents():
             'flat_id':        r.flat_id,
             'flat_number':    r.flat.flat_number if r.flat else None,
             'pending_due':    pending_due,
+            'has_dues':       len(r.dues) > 0,
         })
 
     return jsonify({

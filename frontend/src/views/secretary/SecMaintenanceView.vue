@@ -33,8 +33,8 @@ function residentById(id) {
   return residents.value.find(r => r.id === id)
 }
 
-// group dues into unique months, sorted ascending
-const months = computed(() => {
+// months that actually have dues generated, sorted ascending
+const generatedMonths = computed(() => {
   const seen = new Map()
   dues.value.forEach(d => {
     if (!seen.has(d.month)) seen.set(d.month, d.month)
@@ -42,22 +42,32 @@ const months = computed(() => {
   return Array.from(seen.keys()).sort()
 })
 
-const selectedMonth = ref('')
-onMounted(() => {
-  // wait for loadAll to populate months, then default to latest
+// the real current calendar month, regardless of what's been generated
+const realCurrentMonthISO = computed(() => {
+  const now = new Date()
+  return isoOf(now.getFullYear(), now.getMonth() + 1)
 })
 
-const latestMonth = computed(() => months.value[months.value.length - 1])
+// dropdown options = every generated month, plus the real current month
+// even if nothing's been generated for it yet (so "Viewing" always has
+// a sane default and an empty state can be shown for it)
+const months = computed(() => {
+  const set = new Set(generatedMonths.value)
+  set.add(realCurrentMonthISO.value)
+  return Array.from(set).sort()
+})
 
-function selectLatest() {
-  if (latestMonth.value && !selectedMonth.value) selectedMonth.value = latestMonth.value
-}
+const selectedMonth = ref('')
+
+const latestMonth = computed(() => generatedMonths.value[generatedMonths.value.length - 1])
 
 const selectedMonthLabel = computed(() =>
   selectedMonth.value ? new Date(selectedMonth.value).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }) : ''
 )
 
-const isCurrentMonthSelected = computed(() => selectedMonth.value === latestMonth.value)
+// tag shown next to the dropdown — reflects the real current month,
+// not just whichever month happens to be the latest generated one
+const isCurrentMonthSelected = computed(() => selectedMonth.value === realCurrentMonthISO.value)
 
 const selectedMonthDues = computed(() =>
   dues.value.filter(d => d.month === selectedMonth.value)
@@ -117,22 +127,38 @@ const generateAmount = ref(2500)
 const generateMonth = ref('') // yyyy-mm-dd, first of month
 const generating = ref(false)
 
-function nextMonthISO() {
-  if (!latestMonth.value) {
-    const d = new Date()
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
+function pad2(n) { return String(n).padStart(2, '0') }
+
+function isoOf(y, m) { return `${y}-${pad2(m)}-01` }
+
+// earliest month, starting at the actual current calendar month, that
+// doesn't already have dues generated — walks forward past any months
+// that are already done instead of blindly assuming "latest + 1", so it
+// also self-corrects if a month was skipped earlier
+function suggestedGenerateMonth() {
+  const now = new Date()
+  let y = now.getFullYear()
+  let m = now.getMonth() + 1
+
+  while (months.value.includes(isoOf(y, m))) {
+    m += 1
+    if (m > 12) { m = 1; y += 1 }
   }
-  const [y, m] = latestMonth.value.split('-').map(Number)
-  const ny = m === 12 ? y + 1 : y
-  const nm = m === 12 ? 1 : m + 1
-  return `${ny}-${String(nm).padStart(2, '0')}-01`
+  return isoOf(y, m)
 }
 
 function onGenerateDuesClick() {
   generateAmount.value = 2500
-  generateMonth.value = nextMonthISO()
+  generateMonth.value = suggestedGenerateMonth()
   showGenerateModal.value = true
 }
+
+// true if the month currently picked in the modal already has dues —
+// shown as an inline warning so repeated clicks can't silently sail
+// past an already-generated month without the secretary noticing
+const generateMonthAlreadyDone = computed(() =>
+  !!generateMonth.value && months.value.includes(generateMonth.value)
+)
 
 async function confirmGenerateDues() {
   generating.value = true
@@ -215,9 +241,9 @@ function fundLabel(name) {
   return map[name] || name
 }
 
-// watch load to set default month
+// default the initial view to the real current month (once, on first load)
 import { watch } from 'vue'
-watch(months, (m) => { if (m.length && !selectedMonth.value) selectedMonth.value = m[m.length - 1] })
+watch(months, (m) => { if (m.length && !selectedMonth.value) selectedMonth.value = realCurrentMonthISO.value })
 </script>
 
 <template>
@@ -251,7 +277,7 @@ watch(months, (m) => { if (m.length && !selectedMonth.value) selectedMonth.value
             {{ new Date(m).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }) }}
           </option>
         </select>
-        <span v-if="isCurrentMonthSelected" class="current-tag">Latest month</span>
+        <span v-if="isCurrentMonthSelected" class="current-tag">Current month</span>
       </div>
 
       <div class="summary-grid">
@@ -279,7 +305,7 @@ watch(months, (m) => { if (m.length && !selectedMonth.value) selectedMonth.value
         <table class="dues-table">
           <thead>
             <tr>
-              <th>Resident</th><th>Flat</th><th>Amount Due</th><th>Amount Paid</th><th>Status</th><th>Action</th>
+              <th>Resident</th><th>Flat</th><th>Amount Due</th><th>Total Amount Due</th><th>Amount Paid</th><th>Status</th><th>Action</th>
             </tr>
           </thead>
           <tbody>
@@ -287,6 +313,9 @@ watch(months, (m) => { if (m.length && !selectedMonth.value) selectedMonth.value
               <td><button class="resident-link" @click="openProfile(due.resident_id)">{{ residentById(due.resident_id)?.name }}</button></td>
               <td class="flat-cell">{{ residentById(due.resident_id)?.flat_number || '—' }}</td>
               <td class="amount-cell">{{ formatAmount(due.amount_due) }}</td>
+              <td class="amount-cell" :title="'Total unpaid across all months, not just ' + selectedMonthLabel">
+                {{ residentById(due.resident_id)?.pending_due != null ? formatAmount(residentById(due.resident_id).pending_due) : '—' }}
+              </td>
               <td class="amount-cell">{{ formatAmount(due.amount_paid) }}</td>
               <td><span :class="['status-chip', statusClass(due)]">{{ statusLabel(due) }}</span></td>
               <td>
@@ -294,6 +323,11 @@ watch(months, (m) => { if (m.length && !selectedMonth.value) selectedMonth.value
                 <button v-else class="mark-paid-btn" :disabled="markingPaid[due.id]" @click="markPaid(due)">
                   {{ markingPaid[due.id] ? 'Saving...' : 'Mark Paid' }}
                 </button>
+              </td>
+            </tr>
+            <tr v-if="!selectedMonthDues.length">
+              <td colspan="7" class="empty-row">
+                No dues generated for {{ selectedMonthLabel }} yet — click "Generate Dues" above to create them.
               </td>
             </tr>
           </tbody>
@@ -347,12 +381,15 @@ watch(months, (m) => { if (m.length && !selectedMonth.value) selectedMonth.value
         <h3 class="confirm-title">Generate dues</h3>
         <label class="generate-label">Month</label>
         <input type="date" v-model="generateMonth" class="generate-input" />
+        <p v-if="generateMonthAlreadyDone" class="generate-warning">
+          ⚠ Dues already exist for this month — generating again will only fill in any missing residents, not create a new batch.
+        </p>
         <label class="generate-label">Amount per flat (₹)</label>
         <input type="number" v-model.number="generateAmount" class="generate-input" min="0" />
         <div class="confirm-actions">
           <button class="cancel-btn" @click="showGenerateModal = false">Cancel</button>
           <button class="send-btn" :disabled="generating || !generateAmount" @click="confirmGenerateDues">
-            {{ generating ? 'Generating...' : 'Generate Dues' }}
+            {{ generating ? 'Generating...' : (generateMonthAlreadyDone ? 'Top Up Missing' : 'Generate Dues') }}
           </button>
         </div>
       </div>
@@ -548,6 +585,13 @@ watch(months, (m) => { if (m.length && !selectedMonth.value) selectedMonth.value
 
 .flat-cell   { font-weight: 600; color: var(--color-text-secondary); }
 .amount-cell { font-weight: 700; color: var(--color-text-primary); }
+
+.empty-row {
+  text-align: center;
+  padding: 24px 12px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
 .date-cell   { color: var(--color-text-muted); white-space: nowrap; }
 
 .status-chip { padding: 3px 10px; border-radius: var(--radius-pill); font-size: var(--font-size-xs); font-weight: 700; }
@@ -644,6 +688,18 @@ watch(months, (m) => { if (m.length && !selectedMonth.value) selectedMonth.value
 .confirm-sub { font-size: var(--font-size-sm); color: var(--color-text-secondary); line-height: 1.55; }
 
 .generate-label { align-self: flex-start; font-size: var(--font-size-sm); font-weight: 700; color: var(--c-800); margin-top: 4px; }
+
+.generate-warning {
+  align-self: stretch;
+  background: var(--color-warning-bg);
+  color: var(--color-warning-text);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-align: left;
+  line-height: 1.4;
+}
 .generate-input {
   width: 100%;
   height: 44px;

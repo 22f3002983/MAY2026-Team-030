@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAuthStore } from '../../stores/auth'
+import NotificationBell from './NotificationBell.vue'
 
 const route = useRoute()
 const auth = useAuthStore()
@@ -43,6 +44,7 @@ const pageTitle = computed(() => {
     <!-- right side - role badge + user name -->
     <div class="navbar-right">
       <span class="role-badge">{{ auth.role }}</span>
+      <NotificationBell />
       <div class="navbar-user">
         <div class="navbar-avatar">{{ auth.name?.charAt(0) || 'U' }}</div>
         <span class="navbar-name">{{ auth.name }}</span>

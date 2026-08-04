@@ -34,6 +34,41 @@ def dues_to_dict(d):
     }
 
 
+def _last_known_amount():
+    """Amount to use for auto-generated dues — reuses whatever amount_due
+    was on the most recently generated due (by month), across all
+    residents. Returns None if no dues have ever been generated, in
+    which case auto-generation is skipped rather than guessing."""
+    last_due = Dues.query.order_by(Dues.month.desc(), Dues.created_at.desc()).first()
+    return last_due.amount_due if last_due else None
+
+
+def generate_due_for_new_resident(resident):
+    """Called right after a resident is created (see auth.register). If
+    they're joining before/mid the current month, give them a due for
+    the current month immediately using the most recently generated
+    month's amount, instead of waiting for the next generation cycle.
+    No-ops if no dues have ever been generated yet, or if a due already
+    exists for them this month."""
+    current_month = date.today().replace(day=1)
+
+    if Dues.query.filter_by(resident_id=resident.id, month=current_month).first():
+        return
+
+    amount = _last_known_amount()
+    if amount is None:
+        return
+
+    db.session.add(Dues(
+        id=str(uuid.uuid4()),
+        resident_id=resident.id,
+        month=current_month,
+        amount_due=amount,
+        amount_paid=0,
+    ))
+    db.session.commit()
+
+
 def generate_receipt_pdf(due):
     """Render a PDF receipt for a paid due and save it under instance/receipts/.
     Returns the path relative to the Flask instance folder."""
@@ -111,6 +146,60 @@ def list_dues():
     }), 200
 
 
+# ── GET /api/dues/resident/<resident_id> — every month for one resident ──
+# secretary can view any resident; a resident can only view their own
+
+@dues_bp.route('/resident/<resident_id>', methods=['GET'])
+@login_required
+def list_dues_for_resident(resident_id):
+    resident = Resident.query.get_or_404(resident_id)
+
+    if current_user.role == 'resident':
+        if current_user.resident.id != resident.id:
+            return jsonify({'error': 'Unauthorized'}), 403
+    elif current_user.role != 'secretary':
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    dues = Dues.query.filter_by(resident_id=resident.id).order_by(Dues.month.desc()).all()
+
+    return jsonify({
+        'dues':  [dues_to_dict(d) for d in dues],
+        'total': len(dues),
+    }), 200
+
+
+def compute_outstanding(resident):
+    """Single source of truth for a resident's total unpaid amount across
+    ALL their dues (any month). Used by both GET /dues/resident/<id>/outstanding
+    below and by auth.list_residents — previously each reimplemented this
+    same sum independently, which risked the two silently drifting apart."""
+    return sum(
+        float(d.amount_due) - float(d.amount_paid)
+        for d in resident.dues
+        if float(d.amount_paid) < float(d.amount_due)
+    )
+
+
+# ── GET /api/dues/resident/<resident_id>/outstanding — total unpaid ──
+# sum of amount_due - amount_paid across every unpaid/partial due for
+# this resident, across all months — not scoped to any single month
+
+@dues_bp.route('/resident/<resident_id>/outstanding', methods=['GET'])
+@login_required
+def resident_outstanding(resident_id):
+    resident = Resident.query.get_or_404(resident_id)
+
+    if current_user.role == 'resident':
+        if current_user.resident.id != resident.id:
+            return jsonify({'error': 'Unauthorized'}), 403
+    elif current_user.role != 'secretary':
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    outstanding = compute_outstanding(resident)
+
+    return jsonify({'resident_id': resident.id, 'outstanding': outstanding}), 200
+
+
 # ── GET /api/dues/<id> — get single due ───────────────────────
 
 @dues_bp.route('/<due_id>', methods=['GET'])
@@ -148,17 +237,20 @@ def generate_dues():
     # normalize to first-of-month regardless of what day was passed
     month = month.replace(day=1)
 
-    # reject past or current-and-earlier months — only the upcoming month is allowed
+    # reject past months — current month or any future month is fine
     today = date.today()
     current_month_start = today.replace(day=1)
-    if month <= current_month_start:
-        return jsonify({'error': 'Cannot generate dues for the current month or earlier — only future months are allowed'}), 400
+    if month < current_month_start:
+        return jsonify({'error': 'Cannot generate dues for a past month'}), 400
 
     residents = Resident.query.all()
     if not residents:
         return jsonify({'error': 'No residents found'}), 400
 
-    # if every resident already has a due for this month, treat it as already generated
+    # block only if this month is already fully generated (every current
+    # resident already has a due) — partial top-up is still allowed, e.g.
+    # if a new resident joined after the last generation and needs
+    # covering for a month that already exists for everyone else
     already_generated_count = Dues.query.filter_by(month=month).count()
     if already_generated_count >= len(residents):
         return jsonify({'error': f'Dues have already been generated for {month.strftime("%B %Y")}'}), 400
@@ -280,4 +372,3 @@ def send_reminder():
         'message':  f'Reminder sent to {len(pending)} residents',
         'notified': len(pending),
     }), 200
-

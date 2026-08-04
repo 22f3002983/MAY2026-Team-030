@@ -102,7 +102,8 @@ async function addResident() {
   } finally {
     submitting.value = false
   }
-  // ADDED
+}
+
 const regenerating = ref(false)
 const regenerateError = ref('')
 
@@ -126,25 +127,24 @@ async function regenerateInvite(resident) {
   }
 }
 
-
-
-}
-
 function duesClass(status) {
   if (status === 'paid')    return 'dues-paid'
   if (status === 'overdue') return 'dues-overdue'
+  if (status === 'none')    return 'dues-none'
   return 'dues-pending'
 }
 
-// ADDED — derive a display status from pending_due since the backend
+// derive a display status from pending_due/has_dues since the backend
 // doesn't return a separate dues_status field
 function duesDisplay(resident) {
   if (resident.pending_due === null || resident.pending_due === undefined) return '—'
+  if (!resident.has_dues) return 'No dues yet'
   if (resident.pending_due <= 0) return 'Paid'
   return `₹${resident.pending_due.toLocaleString('en-IN')}`
 }
 function duesStatusOf(resident) {
   if (resident.pending_due === null || resident.pending_due === undefined) return 'pending'
+  if (!resident.has_dues) return 'none'
   if (resident.pending_due <= 0) return 'paid'
   return 'pending'
 }
@@ -177,7 +177,7 @@ function duesStatusOf(resident) {
             <th>Flat</th>
             <th>Phone</th>
             <th>Members</th>
-            <th>Dues</th>
+            <th>Outstanding Dues</th>
             <th>Type</th>
             <th>Status</th>
           </tr>
@@ -499,6 +499,7 @@ function duesStatusOf(resident) {
 .dues-paid    { color: var(--color-success-text); }
 .dues-pending { color: var(--color-warning-text); }
 .dues-overdue { color: var(--color-danger-text);  }
+.dues-none    { color: var(--color-text-secondary); }
 
 .type-badge {
   font-size: var(--font-size-xs);

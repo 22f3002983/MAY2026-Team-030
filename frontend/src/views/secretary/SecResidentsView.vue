@@ -26,6 +26,28 @@ const formError = ref('')
 
 const residents = ref([])
 
+// ── Tower dropdown: real towers from the backend + an "add new tower"
+// option that reveals a free-text input ────────────────────────────
+const towerList   = ref([])
+const NEW_TOWER   = '__new__'
+const newTowerName = ref('')
+
+async function fetchTowers() {
+  try {
+    const res = await api.get('/flats/blocks')
+    towerList.value = res.data.blocks
+  } catch (err) {
+    console.error('Failed to load tower list', err)
+  }
+}
+
+// ── Phone: fixed +91 prefix, digits-only, max 10 ────────────────────
+const phoneDigits = ref('')
+
+function onPhoneInput(e) {
+  phoneDigits.value = e.target.value.replace(/\D/g, '').slice(0, 10)
+}
+
 async function fetchResidents() {
   loading.value = true
   try {
@@ -38,7 +60,10 @@ async function fetchResidents() {
   }
 }
 
-onMounted(fetchResidents)
+onMounted(() => {
+  fetchResidents()
+  fetchTowers()
+})
 
 const filtered = computed(() => {
   if (!searchQuery.value) return residents.value
@@ -61,16 +86,24 @@ function openDetail(resident) {
 async function addResident() {
   formError.value = ''
 
+  const resolvedTower = newResident.value.tower === NEW_TOWER
+    ? newTowerName.value.trim()
+    : newResident.value.tower
+
   if (!newResident.value.name || !newResident.value.email || !newResident.value.password ||
-      !newResident.value.flat_number || !newResident.value.phone) {
-    formError.value = 'Name, email, password, flat number and phone are required'
+      !newResident.value.flat_number) {
+    formError.value = 'Name, email, password and flat number are required'
+    return
+  }
+  if (phoneDigits.value.length !== 10) {
+    formError.value = 'Phone number must be exactly 10 digits'
     return
   }
   if (newResident.value.password.length < 6) {
     formError.value = 'Password must be at least 6 characters'
     return
   }
-  if (!newResident.value.tower || newResident.value.floor === null || !newResident.value.unit_number) {
+  if (!resolvedTower || newResident.value.floor === null || !newResident.value.unit_number) {
     formError.value = 'Tower, floor and unit number are required to register a new flat'
     return
   }
@@ -82,8 +115,8 @@ async function addResident() {
       password:       newResident.value.password,
       role:           'resident',
       name:           newResident.value.name,
-      phone:          newResident.value.phone,
-      tower:          newResident.value.tower,
+      phone:          '+91' + phoneDigits.value,
+      tower:          resolvedTower,
       floor:          newResident.value.floor,
       unit_number:    newResident.value.unit_number,
       flat_number:    newResident.value.flat_number,
@@ -92,8 +125,11 @@ async function addResident() {
     })
 
     await fetchResidents()
+    await fetchTowers() // pick up a brand-new tower if one was just added
 
     newResident.value = { name: '', email: '', password: '', tower: '', floor: null, unit_number: '', flat_number: '', phone: '', members: 1, occupant_type: 'owner' }
+    newTowerName.value = ''
+    phoneDigits.value = ''
     showAddModal.value = false
 
     alert('Resident added. They can log in with the email/password you set, and change their password afterward.')
@@ -305,10 +341,22 @@ function duesStatusOf(resident) {
           <label>Password *</label>
           <input v-model="newResident.password" type="text" placeholder="Starting password (min 6 chars)" class="n-input" />
 
-          <div class="two-col">
+         <div class="two-col">
             <div>
               <label>Tower *</label>
-              <input v-model="newResident.tower" type="text" placeholder="e.g. A" class="n-input" />
+              <select v-model="newResident.tower" class="n-input n-select">
+                <option value="" disabled>Select tower</option>
+                <option v-for="t in towerList" :key="t" :value="t">Tower {{ t }}</option>
+                <option :value="NEW_TOWER">+ Add new tower</option>
+              </select>
+              <input
+                v-if="newResident.tower === NEW_TOWER"
+                v-model="newTowerName"
+                type="text"
+                placeholder="New tower name, e.g. E"
+                class="n-input"
+                style="margin-top: 8px;"
+              />
             </div>
             <div>
               <label>Floor *</label>
@@ -327,7 +375,18 @@ function duesStatusOf(resident) {
           </div>
 
           <label>Phone *</label>
-          <input v-model="newResident.phone" type="text" placeholder="+91 98XXX XXXXX" class="n-input" />
+          <div class="phone-input-group">
+            <span class="phone-prefix">+91</span>
+            <input
+              :value="phoneDigits"
+              @input="onPhoneInput"
+              type="text"
+              inputmode="numeric"
+              maxlength="10"
+              placeholder="98XXXXXXXX"
+              class="n-input phone-input"
+            />
+          </div>
 
           <div class="two-col">
             <div>
@@ -365,6 +424,29 @@ function duesStatusOf(resident) {
 <style scoped>
 .sec-residents {
   max-width: var(--content-max-width);
+}
+
+.phone-input-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.phone-prefix {
+  height: 42px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  border: 1.5px solid var(--color-border-soft);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-soft);
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.phone-input {
+  flex: 1;
 }
 
 .page-header {

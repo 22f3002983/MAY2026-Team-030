@@ -12,11 +12,36 @@ const categoryOptions = ['Plumbing', 'Electrical', 'Cleaning', 'Carpentry', 'Sec
 const priorityOptions = ['High', 'Medium', 'Low']
 const priorityRank = { High: 3, Medium: 2, Low: 1 }
 
-const towerOptions = ['Tower A', 'Tower B', 'Common Area / Society-wide']
-const amenityOptions = [
-  'Lift', 'Corridor', 'Staircase', 'Garden', 'Clubhouse',
-  'Parking', 'Water Tank', 'Security Cabin', 'Gate / Entrance', 'Terrace', 'Other',
-]
+// 'Common Area / Society-wide' is always first and is the default — most
+// complaints raised here are common-area issues, not personal-flat ones.
+// Real tower names are fetched from the backend so this always matches
+// whatever towers actually exist, instead of a hardcoded guess.
+const towerOptions = ref(['Common Area / Society-wide'])
+
+async function fetchTowers() {
+  try {
+    const res = await api.get('/flats/blocks')
+    towerOptions.value = ['Common Area / Society-wide', ...res.data.blocks]
+  } catch (err) {
+    console.error('Failed to load tower list', err)
+  }
+}
+
+// Real amenities from the backend catalogue, instead of a hardcoded guess —
+// so this always matches whatever the secretary has actually set up.
+const amenityOptions = ref([])
+
+async function fetchAmenityOptions() {
+  try {
+    const res = await api.get('/amenities')
+    amenityOptions.value = res.data.amenities.map(a => a.name)
+    if (!newAmenity.value && amenityOptions.value.length) {
+      newAmenity.value = amenityOptions.value[0]
+    }
+  } catch (err) {
+    console.error('Failed to load amenity list', err)
+  }
+}
 
 const DEFAULT_JOIN_DESC = 'Confirmed the same issue for me too'
 
@@ -148,6 +173,8 @@ async function loadIssues() {
 onMounted(async () => {
   await fetchVendors()
   await loadIssues()
+  await fetchTowers()
+  await fetchAmenityOptions()
 })
 
 function isParticipant(issue) {
@@ -373,12 +400,11 @@ const newTitle = ref('')
 const newCategory = ref('Electrical')
 const newDesc = ref('')
 const newPriority = ref('Medium')
-
-const newTower = ref('Tower A')
+const newTower = ref('Common Area / Society-wide')
 const newFloor = ref('')
 const newUnit = ref('')
 const newIsAmenity = ref(false)
-const newAmenity = ref(amenityOptions[0])
+const newAmenity = ref('')
 
 const duplicateMatches = ref([])
 
@@ -400,11 +426,11 @@ function openRaise() {
   newCategory.value = 'Electrical'
   newDesc.value = ''
   newPriority.value = 'Medium'
-  newTower.value = 'Tower A'
+  newTower.value = 'Common Area / Society-wide'
   newFloor.value = ''
   newUnit.value = ''
   newIsAmenity.value = false
-  newAmenity.value = amenityOptions[0]
+  newAmenity.value = amenityOptions.value[0] || ''
   duplicateMatches.value = []
   showRaise.value = true
 }
@@ -706,11 +732,15 @@ function showToast(text) {
             <div class="form-block location-block">
               <span class="block-label">📍 Where is this</span>
 
-              <div class="location-grid">
+             <div v-if="!newIsAmenity" class="location-grid">
                 <div class="location-field">
                   <span class="location-label">Tower</span>
                   <select v-model="newTower" class="n-input n-select">
-                    <option v-for="t in towerOptions" :key="t" :value="t">{{ t }}</option>
+                    <option
+    v-for="t in towerOptions"
+    :key="t"
+    :value="t"
+  >{{ t === 'Common Area / Society-wide' ? t : `Tower ${t}` }}</option>
                   </select>
                 </div>
                 <div class="location-field">

@@ -52,7 +52,7 @@ def list_blocks():
     """Unique tower/block values from the flats table, used to populate
     the notice 'relevance' options so stored values always match what
     residents are filtered against (resident.flat.tower)."""
-    if current_user.role not in ('secretary', 'security'):
+    if current_user.role not in ('secretary', 'security', 'resident'):
         return jsonify({'error': 'Unauthorized'}), 403
 
     rows = (

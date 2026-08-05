@@ -65,14 +65,17 @@ def create_app():
     from app.routes.service_requests import service_requests_bp
     flask_app.register_blueprint(service_requests_bp, url_prefix='/api/service-requests')
 
-    # from app.routes.electricity_bills import electricity_bills_bp
-    # flask_app.register_blueprint(electricity_bills_bp, url_prefix='/api/electricity-bills')
+    from app.routes.electricity_bills import electricity_bills_bp
+    flask_app.register_blueprint(electricity_bills_bp, url_prefix='/api/electricity-bills')
 
     from app.routes.funds import funds_bp
     flask_app.register_blueprint(funds_bp, url_prefix='/api/funds')
 
     from app.routes.flats import flats_bp
     flask_app.register_blueprint(flats_bp, url_prefix='/api/flats')
+
+    from app.routes.ai_assistant import ai_assistant_bp
+    flask_app.register_blueprint(ai_assistant_bp, url_prefix='/api/ai-assistant')
 
     # ── Swagger / OpenAPI docs ──────────────────────────────────
     @flask_app.route(SWAGGER_SPEC_URL)
@@ -91,8 +94,26 @@ def create_app():
     with flask_app.app_context():
         from app import models
         db.create_all()
+        _ensure_telegram_columns(db.engine)
 
     from app.scheduler import start_scheduler
     start_scheduler(flask_app)
 
+    from app.telegram_bot import start_telegram_bot
+    start_telegram_bot(flask_app)
+
     return flask_app
+
+
+def _ensure_telegram_columns(engine):
+    """Non-destructive ALTER TABLE for telegram_chat_id — db.create_all()
+    only creates missing tables, it never alters existing ones, so an
+    existing niwaas.db needs this to pick up the new column."""
+    from sqlalchemy import inspect, text
+
+    for table in ('residents', 'secretary', 'security', 'vendors'):
+        columns = [c['name'] for c in inspect(engine).get_columns(table)]
+        if 'telegram_chat_id' not in columns:
+            with engine.connect() as conn:
+                conn.execute(text(f'ALTER TABLE {table} ADD COLUMN telegram_chat_id VARCHAR(64)'))
+                conn.commit()

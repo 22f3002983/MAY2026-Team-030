@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../../api/axios'
 import { useAuthStore } from '../../stores/auth' // adjust path if this view lives elsewhere
@@ -91,6 +91,10 @@ function mapSocietyIssue(i) {
     location: i.location || '—',
     category: toFrontendCategory(i.category),
     priority: toFrontendPriority(i.priority),
+    // raw (nullable) AI fields — no fallback to category/priority, so the
+    // UI can tell "not suggested yet" apart from "suggested"
+    aiCategory: i.ai_suggested_category ? toFrontendCategory(i.ai_suggested_category) : null,
+    aiPriority: i.ai_suggested_priority ? toFrontendPriority(i.ai_suggested_priority) : null,
     status: i.status === 'in_progress' ? 'In Progress' : toFrontendPriority(i.status).replace('_', ' '),
     vendor: vendorNameById(i.vendor_id),
     scheduledStart: i.vendor_start_time,
@@ -122,6 +126,8 @@ function mapOwnComplaint(c) {
     location: c.location || '—',
     category: toFrontendCategory(c.category),
     priority: toFrontendPriority(c.priority),
+    aiCategory: c.ai_suggested_category ? toFrontendCategory(c.ai_suggested_category) : null,
+    aiPriority: c.ai_suggested_priority ? toFrontendPriority(c.ai_suggested_priority) : null,
     status: c.status === 'in_progress' ? 'In Progress' : c.status === 'closed' ? 'Rejected' : toFrontendPriority(c.status),
     vendor: vendorNameById(c.vendor_id),
     scheduledStart: c.vendor_start_time,
@@ -143,8 +149,8 @@ function mapOwnComplaint(c) {
   }
 }
 
-async function loadIssues() {
-  loading.value = true
+async function loadIssues(silent = false) {
+  if (!silent) loading.value = true
   loadError.value = ''
   try {
     const [societyRes, mineRes] = await Promise.all([
@@ -166,9 +172,54 @@ async function loadIssues() {
     loadError.value = err.response?.data?.error || 'Failed to load issues'
     console.error('Failed to load issues', err)
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
+
+/* ---------------- AI category/priority background polling (after raise) ----------------
+   The backend now runs suggest_category/suggest_priority in a background
+   thread after saving the complaint (see complaints.py), so a freshly
+   created issue starts with both fields null. Poll quietly until they show
+   up, or give up after 30s. */
+
+const pendingAiIssueIds = ref(new Set())
+const aiPollTimers = {} // issueId -> { interval, timeout }
+
+function stopAiPolling(issueId) {
+  const timers = aiPollTimers[issueId]
+  if (timers) {
+    clearInterval(timers.interval)
+    clearTimeout(timers.timeout)
+    delete aiPollTimers[issueId]
+  }
+  if (pendingAiIssueIds.value.has(issueId)) {
+    pendingAiIssueIds.value.delete(issueId)
+    pendingAiIssueIds.value = new Set(pendingAiIssueIds.value) // new ref for reactivity
+  }
+}
+
+function startAiPolling(issueId) {
+  pendingAiIssueIds.value = new Set(pendingAiIssueIds.value).add(issueId)
+
+  const interval = setInterval(async () => {
+    await loadIssues(true) // silent — don't flip the page-wide loading state
+    const issue = issues.value.find(i => i.id === issueId)
+    if (issue && issue.aiCategory) {
+      stopAiPolling(issueId)
+    }
+  }, 3000)
+
+  const timeout = setTimeout(() => stopAiPolling(issueId), 30000)
+
+  aiPollTimers[issueId] = { interval, timeout }
+}
+
+onUnmounted(() => {
+  Object.values(aiPollTimers).forEach(({ interval, timeout }) => {
+    clearInterval(interval)
+    clearTimeout(timeout)
+  })
+})
 
 onMounted(async () => {
   await fetchVendors()
@@ -400,6 +451,7 @@ const newTitle = ref('')
 const newCategory = ref('Electrical')
 const newDesc = ref('')
 const newPriority = ref('Medium')
+
 const newTower = ref('Common Area / Society-wide')
 const newFloor = ref('')
 const newUnit = ref('')
@@ -420,6 +472,68 @@ const newLocationString = computed(() => {
   return bits.join(', ')
 })
 
+/* ---------------- AI category + priority suggestions (raise form) ---------------- */
+
+const categorySuggestion = ref(null)   // backend-format category string, e.g. 'plumbing'
+const categorySuggestState = ref('idle') // idle | loading | done | unavailable
+const suggestingCategory = computed(() => categorySuggestState.value === 'loading')
+const categoryButtonDisabled = computed(() => newDesc.value.trim().length < 10)
+
+async function requestCategorySuggestion() {
+  if (categoryButtonDisabled.value || suggestingCategory.value) return
+  categorySuggestState.value = 'loading'
+  try {
+    const res = await api.post('/complaints/suggest', { description: newDesc.value.trim() })
+    if (res.data.category) {
+      categorySuggestion.value = res.data.category
+      categorySuggestState.value = 'done'
+    } else {
+      categorySuggestState.value = 'unavailable'
+    }
+  } catch (err) {
+    console.error('Failed to get category suggestion', err)
+    categorySuggestState.value = 'unavailable'
+  }
+}
+
+function applyCategorySuggestion() {
+  if (!categorySuggestion.value) return
+  newCategory.value = toFrontendCategory(categorySuggestion.value)
+}
+
+const prioritySuggestion = ref(null)   // backend-format priority string, e.g. 'high'
+const prioritySuggestState = ref('idle') // idle | loading | done | unavailable
+const suggestingPriority = computed(() => prioritySuggestState.value === 'loading')
+const priorityCategoryMissing = computed(() => !newCategory.value)
+const priorityDescTooShort = computed(() => newDesc.value.trim().length < 10)
+const priorityButtonDisabled = computed(() => priorityCategoryMissing.value || priorityDescTooShort.value)
+
+async function requestPrioritySuggestion() {
+  if (priorityButtonDisabled.value || suggestingPriority.value) return
+  prioritySuggestState.value = 'loading'
+  try {
+    const res = await api.post('/complaints/suggest-priority', {
+      description: newDesc.value.trim(),
+      category: toBackendCategory(newCategory.value),
+      title: newTitle.value.trim(), // optional — improves the suggestion when available
+    })
+    if (res.data.priority) {
+      prioritySuggestion.value = res.data.priority
+      prioritySuggestState.value = 'done'
+    } else {
+      prioritySuggestState.value = 'unavailable'
+    }
+  } catch (err) {
+    console.error('Failed to get priority suggestion', err)
+    prioritySuggestState.value = 'unavailable'
+  }
+}
+
+function applyPrioritySuggestion() {
+  if (!prioritySuggestion.value) return
+  newPriority.value = toFrontendPriority(prioritySuggestion.value)
+}
+
 function openRaise() {
   raiseStep.value = 'form'
   newTitle.value = ''
@@ -432,6 +546,10 @@ function openRaise() {
   newIsAmenity.value = false
   newAmenity.value = amenityOptions.value[0] || ''
   duplicateMatches.value = []
+  categorySuggestion.value = null
+  categorySuggestState.value = 'idle'
+  prioritySuggestion.value = null
+  prioritySuggestState.value = 'idle'
   showRaise.value = true
 }
 
@@ -487,7 +605,7 @@ async function joinMatch(issue) {
 async function createNewIssue() {
   submittingIssue.value = true
   try {
-    await api.post('/complaints', {
+    const res = await api.post('/complaints', {
       title: newTitle.value.trim(),
       description: newDesc.value.trim(),
       category: toBackendCategory(newCategory.value),
@@ -497,6 +615,15 @@ async function createNewIssue() {
     })
     showToast('Issue raised — you\'ll be updated as it progresses')
     await loadIssues()
+
+    // the backend saves instantly and runs category/priority suggestion in
+    // the background — poll until it lands, unless this joined an
+    // already-analyzed existing issue and it's already there
+    const createdIssueId = res.data.complaint?.issue_id
+    if (createdIssueId && !res.data.complaint?.ai_suggested_category) {
+      startAiPolling(createdIssueId)
+    }
+
     closeRaise()
   } catch (err) {
     showToast(err.response?.data?.error || 'Failed to raise issue')
@@ -576,6 +703,12 @@ function showToast(text) {
           <p class="issue-loc">{{ i.location }} · {{ i.id }}</p>
         </div>
         <span class="reports-badge" title="Residents reporting this">{{ i.reports.length }} reported</span>
+        <span v-if="pendingAiIssueIds.has(i.id)" class="ai-list-badge pending">
+          <span class="mini-spinner"></span> Analysing...
+        </span>
+        <span v-else-if="i.aiCategory || i.aiPriority" class="ai-list-badge">
+          🤖 AI: {{ i.aiCategory || i.category }}<template v-if="i.aiPriority"> · {{ i.aiPriority }}</template>
+        </span>
         <span :class="['priority-badge', priorityClass(i.priority)]">{{ i.priority }}</span>
         <span :class="['status-badge', statusClass(i.status)]">{{ i.status }}</span>
       </div>
@@ -667,9 +800,9 @@ function showToast(text) {
                 rows="2"
               ></textarea>
               <div class="join-actions">
-               <button class="btn-primary" :disabled="joining" @click="confirmJoinFromDetail">
-  {{ joining ? 'Joining…' : 'Confirm — Join Issue' }}
-</button>
+                <button class="btn-primary" :disabled="joining" @click="confirmJoinFromDetail">
+                  {{ joining ? 'Joining…' : 'Confirm — Join Issue' }}
+                </button>
                 <button class="btn-outline" @click="cancelJoinForm">Cancel</button>
               </div>
             </template>
@@ -719,6 +852,26 @@ function showToast(text) {
               <label>Describe the issue</label>
               <textarea v-model="newDesc" class="n-input n-textarea" rows="3" placeholder="What did you notice, and when?"></textarea>
 
+              <div class="ai-suggest-row">
+                <button
+                  type="button"
+                  class="btn-ai-suggest-small"
+                  :disabled="categoryButtonDisabled || suggestingCategory"
+                  @click="requestCategorySuggestion"
+                >
+                  <span v-if="suggestingCategory" class="mini-spinner"></span>
+                  {{ suggestingCategory ? 'Suggesting...' : '🤖 Suggest Category' }}
+                </button>
+                <span v-if="categoryButtonDisabled" class="ai-hint">Type more to get a suggestion</span>
+              </div>
+
+              <div v-if="categorySuggestState === 'done'" class="ai-suggest-badge" @click="applyCategorySuggestion">
+                🤖 AI suggests: {{ toFrontendCategory(categorySuggestion) }}
+              </div>
+              <div v-else-if="categorySuggestState === 'unavailable'" class="ai-suggest-badge unavailable">
+                AI suggestion unavailable
+              </div>
+
               <label>How urgent does this feel to you?</label>
               <div class="priority-options">
                 <button
@@ -727,20 +880,41 @@ function showToast(text) {
                   @click="newPriority = p"
                 >{{ p }}</button>
               </div>
+
+              <div class="ai-suggest-row">
+                <button
+                  type="button"
+                  class="btn-ai-suggest-small"
+                  :disabled="priorityButtonDisabled || suggestingPriority"
+                  @click="requestPrioritySuggestion"
+                >
+                  <span v-if="suggestingPriority" class="mini-spinner"></span>
+                  {{ suggestingPriority ? 'Suggesting...' : '🤖 Suggest Priority' }}
+                </button>
+                <span v-if="priorityCategoryMissing" class="ai-hint">Select a category first</span>
+                <span v-else-if="priorityDescTooShort" class="ai-hint">Type more to get a suggestion</span>
+              </div>
+
+              <div v-if="prioritySuggestState === 'done'" class="ai-suggest-badge" @click="applyPrioritySuggestion">
+                🤖 AI suggests: {{ toFrontendPriority(prioritySuggestion) }} Priority
+              </div>
+              <div v-else-if="prioritySuggestState === 'unavailable'" class="ai-suggest-badge unavailable">
+                AI suggestion unavailable
+              </div>
             </div>
 
             <div class="form-block location-block">
               <span class="block-label">📍 Where is this</span>
 
-             <div v-if="!newIsAmenity" class="location-grid">
+              <div v-if="!newIsAmenity" class="location-grid">
                 <div class="location-field">
                   <span class="location-label">Tower</span>
                   <select v-model="newTower" class="n-input n-select">
                     <option
-    v-for="t in towerOptions"
-    :key="t"
-    :value="t"
-  >{{ t === 'Common Area / Society-wide' ? t : `Tower ${t}` }}</option>
+                      v-for="t in towerOptions"
+                      :key="t"
+                      :value="t"
+                    >{{ t === 'Common Area / Society-wide' ? t : `Tower ${t}` }}</option>
                   </select>
                 </div>
                 <div class="location-field">
@@ -801,8 +975,8 @@ function showToast(text) {
                     <span :class="['status-badge', statusClass(m.status)]">{{ m.status }}</span>
                   </div>
                   <p class="report-desc">{{ m.location }} · {{ m.reports.length }} reported</p>
-                  
-                </div><button class="btn-outline join-btn" :disabled="submittingIssue" @click="joinMatch(m)">Join {{ m.id }}</button>
+                  <button class="btn-outline join-btn" :disabled="submittingIssue" @click="joinMatch(m)">Join {{ m.id }}</button>
+                </div>
               </div>
             </div>
             <div v-else class="section" style="padding-top:0;border-top:none;">
@@ -811,8 +985,8 @@ function showToast(text) {
             </div>
 
             <button class="btn-primary" :disabled="submittingIssue" @click="createNewIssue">
-  {{ submittingIssue ? 'Raising…' : 'None of these — Raise as New Issue' }}
-</button>
+              {{ submittingIssue ? 'Raising…' : 'None of these — Raise as New Issue' }}
+            </button>
             <button class="btn-outline back-btn" @click="raiseStep = 'form'">← Back to edit details</button>
           </template>
 
@@ -1011,6 +1185,25 @@ function showToast(text) {
   font-weight: 700;
   color: var(--color-text-secondary);
   white-space: nowrap;
+}
+
+.ai-list-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  background: #F1EAFB;
+  color: #6B3FA0;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.ai-list-badge.pending {
+  font-style: italic;
+  font-weight: 600;
 }
 
 .priority-badge, .status-badge {
@@ -1378,6 +1571,80 @@ label, .join-label {
   border-radius: var(--radius-md);
   padding: 9px 12px;
 }
+
+/* AI category/priority suggestion (raise form) */
+.ai-suggest-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.btn-ai-suggest-small {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--radius-pill);
+  border: 1.5px solid #D9C7F0;
+  background: #F1EAFB;
+  color: #6B3FA0;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  white-space: nowrap;
+  transition: opacity var(--transition-fast);
+}
+
+.btn-ai-suggest-small:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-ai-suggest-small:not(:disabled):hover { opacity: 0.85; }
+
+.mini-spinner {
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(107,63,160,0.3);
+  border-top-color: #6B3FA0;
+  border-radius: 50%;
+  animation: mini-spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes mini-spin {
+  to { transform: rotate(360deg); }
+}
+
+.ai-hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.ai-suggest-badge {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  margin-top: 8px;
+  padding: 6px 12px;
+  border-radius: var(--radius-pill);
+  background: #F1EAFB;
+  color: #6B3FA0;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity var(--transition-fast);
+}
+
+.ai-suggest-badge:hover { opacity: 0.8; }
+
+.ai-suggest-badge.unavailable {
+  background: var(--color-surface-muted);
+  color: var(--color-text-muted);
+  cursor: default;
+  font-style: italic;
+  font-weight: 500;
+}
+
+.ai-suggest-badge.unavailable:hover { opacity: 1; }
 
 /* AI duplicate-check card */
 .ai-check-card {

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import api from '../../api/axios' // adjust path if this view lives elsewhere
 
 /* ---------------- Filters ---------------- */
@@ -162,9 +162,12 @@ function mapIssue(i) {
     title: i.title,
     location: i.location || '—',
     category: capitalize(i.category),
-    aiCategory: capitalize(i.ai_suggested_category || i.category),
+    // raw (nullable) — no fallback to category/priority, so the UI can show
+    // a pending placeholder instead of mislabeling the set value as "AI"
+    aiCategory: i.ai_suggested_category ? capitalize(i.ai_suggested_category) : null,
+    aiPriority: i.ai_suggested_priority ? capitalize(i.ai_suggested_priority) : null,
+    aiPending: !i.ai_suggested_category,
     priority: capitalize(i.priority),
-    aiPriority: capitalize(i.ai_suggested_priority || i.priority),
     status: STATUS_TO_FRONTEND[i.status] || i.status,
     vendor: vendorObj ? vendorObj.name : null,
     scheduledStart: asUtcIso(i.vendor_start_time),
@@ -187,8 +190,8 @@ function mapIssue(i) {
   }
 }
 
-async function fetchIssues() {
-  loading.value = true
+async function fetchIssues(silent = false) {
+  if (!silent) loading.value = true
   loadError.value = ''
   try {
     const res = await api.get('/complaints')
@@ -197,15 +200,25 @@ async function fetchIssues() {
     loadError.value = err.response?.data?.error || 'Failed to load issues'
     console.error('Failed to load issues', err)
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
+
+// picks up category/priority once the backend's background AI thread
+// finishes, without the secretary needing to manually refresh
+let aiRefreshInterval = null
 
 onMounted(async () => {
   await fetchVendors()
   await fetchResidentFlats()
   await fetchFunds()
   await fetchIssues()
+
+  aiRefreshInterval = setInterval(() => fetchIssues(true), 10000)
+})
+
+onUnmounted(() => {
+  if (aiRefreshInterval) clearInterval(aiRefreshInterval)
 })
 
 // FIX: this computed was missing entirely — filtered/openCount/unassignedCount/
@@ -318,14 +331,17 @@ const vendorsForCategory = computed(() =>
 
 function suggestVendorAI() {
   const candidates = vendorsForCategory.value
-  if (!candidates.length) return
+  if (!candidates.length) {
+    lastAiNote.value = `No vendors available for ${detailCategory.value}. Please add a vendor in the Vendor Directory first.`
+    return
+  }
   const loadOf = (v) => issues.value.filter(i =>
     i.vendor === v.name && i.status === 'In Progress' && i.id !== selected.value?.id
   ).length
   const best = [...candidates].sort((a, b) => loadOf(a) - loadOf(b))[0]
   detailVendor.value = best.name
   detailDuration.value = estimatedMinutesByCategory[detailCategory.value] || 60
-  lastAiNote.value = `AI suggested ${best.name} · ~${durationOptions.find(d => d.minutes === detailDuration.value)?.label || detailDuration.value + ' min'}`
+  lastAiNote.value = `Matched ${best.name} (lowest current workload) · ~${durationOptions.find(d => d.minutes === detailDuration.value)?.label || detailDuration.value + ' min'}`
 }
 
 function slotRange(startIso, minutes) {
@@ -591,13 +607,24 @@ function statusClass(s) {
               <span class="issue-meta">{{ i.location }} · {{ i.id }}</span>
             </td>
 
-            <td><span class="category-badge">{{ i.category }}</span></td>
+            <td>
+              <span class="category-badge">{{ i.category }}</span>
+              <span v-if="i.aiPending" class="ai-badge ai-pending">🤖 ...</span>
+              <span
+                v-else-if="i.aiCategory"
+                :class="['ai-badge', { 'ai-disagrees': i.aiCategory !== i.category }]"
+                :title="i.aiCategory !== i.category ? `AI thinks this is ${i.aiCategory} — differs from the set category` : 'AI agrees with the set category'"
+              >
+                ✨ AI: {{ i.aiCategory }}
+              </span>
+            </td>
 
             <td>
               <span :class="['priority-badge', priorityClass(i.priority)]">{{ i.priority }}</span>
+              <span v-if="i.aiPending" class="ai-badge ai-pending">🤖 ...</span>
               <span
-                v-if="i.aiPriority"
-                :class="['ai-priority-badge', { 'ai-disagrees': i.aiPriority !== i.priority }]"
+                v-else-if="i.aiPriority"
+                :class="['ai-badge', { 'ai-disagrees': i.aiPriority !== i.priority }]"
                 :title="i.aiPriority !== i.priority ? `AI thinks this is ${i.aiPriority} priority — differs from the set priority` : 'AI agrees with the set priority'"
               >
                 ✨ AI: {{ i.aiPriority }}
@@ -647,8 +674,11 @@ function statusClass(s) {
             <span :class="['status-badge', statusClass(selected?.status)]">{{ selected?.status }}</span>
           </div>
 
-          <div v-if="selected?.status === 'Open'" class="ai-chip">
+          <div v-if="selected?.status === 'Open' && selected?.aiCategory" class="ai-chip">
             ✨ AI suggested {{ selected?.aiCategory }} · {{ selected?.aiPriority }} priority
+          </div>
+          <div v-else-if="selected?.status === 'Open' && selected?.aiPending" class="ai-chip ai-pending">
+            🤖 AI analysis in progress...
           </div>
 
           <!-- AI summary + individual reports -->
@@ -698,7 +728,7 @@ function statusClass(s) {
                   <option v-for="v in vendorsForCategory" :key="v.name" :value="v.name">{{ v.name }}</option>
                 </select>
               </div>
-              <button class="btn-outline ai-suggest-btn" @click="suggestVendorAI">✨ AI Suggest</button>
+              <button class="btn-outline ai-suggest-btn" @click="suggestVendorAI">🎯 Find Matching Vendor</button>
             </div>
             <p v-if="lastAiNote" class="ai-note">{{ lastAiNote }}</p>
 
@@ -978,7 +1008,7 @@ function statusClass(s) {
 .pri-medium { background: var(--color-warning-bg); color: var(--color-warning-text); }
 .pri-low    { background: var(--color-success-bg); color: var(--color-success-text); }
 
-.ai-priority-badge {
+.ai-badge {
   display: block;
   margin-top: 4px;
   font-size: 11px;
@@ -987,8 +1017,17 @@ function statusClass(s) {
   white-space: nowrap;
 }
 
-.ai-priority-badge.ai-disagrees {
+.ai-badge.ai-disagrees {
   color: var(--color-danger-text);
+}
+
+.ai-pending {
+  animation: ai-pending-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes ai-pending-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
 }
 
 .status-open     { background: var(--color-info-bg);    color: var(--color-info-text);    }

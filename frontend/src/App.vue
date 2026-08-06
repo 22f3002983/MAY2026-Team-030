@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { useAuthStore } from './stores/auth'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import AppNavbar from './components/layout/AppNavbar.vue'
+import AppChatWidget from './components/layout/AppChatWidget.vue'
 
 const route = useRoute()
 const auth = useAuthStore()
@@ -29,6 +30,7 @@ const showLayout = computed(() => {
           <router-view /> <!-- current page renders -->
         </main>
       </div>
+      <AppChatWidget />
     </template>
 
   </div>

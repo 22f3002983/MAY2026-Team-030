@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from flask_login import login_required, current_user
 from app.extensions import db
 from app.models.complaint import Complaint
@@ -11,6 +11,7 @@ from app.services.ai_category import suggest_category
 from app.services.ai_summary import suggest_summary
 from app.services.ai_duplicate import find_semantic_duplicates
 import uuid
+import threading
 from datetime import datetime
 
 complaints_bp = Blueprint('complaints', __name__)
@@ -127,6 +128,36 @@ def notify_reporters(issue, message, notif_type):
             create_notification(user_id=report.resident.user_id, message=message, type=notif_type)
 
 
+
+def _run_ai_suggestions(flask_app, issue_id, title, description, category, compute_category_priority):
+    """Runs off the request thread so POST /api/complaints can return as soon
+    as the complaint is saved — same daemon-thread + app_context pattern as
+    app/telegram_bot.py and app/scheduler.py. suggest_category/suggest_priority/
+    suggest_summary already degrade to None internally (no key / request
+    failure), this try/except is just an extra guard so a DB hiccup here
+    can't crash the thread silently without a trace.
+
+    Runs on every complaint POST, not just new issues — suggest_summary()
+    needs to re-merge descriptions whenever another resident joins an
+    existing issue. compute_category_priority is False on the join path,
+    since those fields are only meaningful once, at issue creation."""
+    with flask_app.app_context():
+        try:
+            issue = CommunityIssue.query.get(issue_id)
+            if not issue:
+                return
+
+            if compute_category_priority:
+                issue.ai_suggested_category = suggest_category(f'{title}. {description}', VALID_CATEGORIES)
+                issue.ai_suggested_priority = suggest_priority(title, description, category)
+
+            all_descriptions = [c.description for c in Complaint.query.filter_by(issue_id=issue_id).all()]
+            issue.ai_suggested_description = suggest_summary(issue.title, issue.category, all_descriptions)
+
+            db.session.commit()
+        except Exception as exc:
+            print(f' * [ai] suggestion failed for issue {issue_id}: {exc}', flush=True)
+
 # ── POST /api/complaints/check-duplicates — pre-submit AI duplicate check ──
 # Resident-triggered (a button, not as-you-type) before raising a new issue.
 # Returns just the matching issue ids — the frontend already has the full,
@@ -168,6 +199,59 @@ def check_duplicates():
     return jsonify({'matches': matched_ids}), 200
 
 
+
+# ── POST /api/complaints/suggest — AI category suggestion (pre-submit) ──
+# Resident-triggered (a button, not as-you-type) while filling out the raise
+# form. Doesn't save anything — just previews what create_complaint's own
+# suggest_category() call would land on.
+
+@complaints_bp.route('/suggest', methods=['POST'])
+@login_required
+def suggest_category_endpoint():
+    if current_user.role != 'resident':
+        return jsonify({'error': 'Only residents can request a category suggestion'}), 403
+
+    data = request.get_json() or {}
+    description = data.get('description', '').strip()
+
+    if not description:
+        return jsonify({'error': 'description is required'}), 400
+
+    category = suggest_category(description, VALID_CATEGORIES)
+
+    if not category:
+        return jsonify({'category': None}), 200
+
+    # ai_category.py has no confidence scoring of its own — 'medium' is a
+    # fixed placeholder to satisfy the response shape, not a per-request signal
+    return jsonify({'category': category, 'confidence': 'medium'}), 200
+
+
+# ── POST /api/complaints/suggest-priority — AI priority suggestion ──────
+# Resident-triggered, fired once a category is selected (not on every
+# keystroke). `title` is optional — suggest_priority() takes it as a signal
+# alongside description/category, so the frontend passes it when available
+# for a better suggestion, but the endpoint works without it.
+
+@complaints_bp.route('/suggest-priority', methods=['POST'])
+@login_required
+def suggest_priority_endpoint():
+    if current_user.role != 'resident':
+        return jsonify({'error': 'Only residents can request a priority suggestion'}), 403
+
+    data = request.get_json() or {}
+    description = data.get('description', '').strip()
+    category    = data.get('category', '')
+    title       = data.get('title', '')
+
+    if not description or category not in VALID_CATEGORIES:
+        return jsonify({'error': 'description and a valid category are required'}), 400
+
+    priority = suggest_priority(title, description, category)
+
+    return jsonify({'priority': priority}), 200
+
+
 # ── POST /api/complaints — raise a complaint (resident only) ──
 
 @complaints_bp.route('', methods=['POST'])
@@ -203,9 +287,9 @@ def create_complaint():
             title=title,
             description=description,
             category=category,
-            ai_suggested_category=suggest_category(f'{title}. {description}', VALID_CATEGORIES),
+            # ai_suggested_category=suggest_category(f'{title}. {description}', VALID_CATEGORIES),
             priority=data.get('priority', 'medium'),
-            ai_suggested_priority=suggest_priority(title, description, category),
+            # ai_suggested_priority=suggest_priority(title, description, category),
             type=type_,
             location=data.get('location'),
             status='open',
@@ -223,11 +307,17 @@ def create_complaint():
     db.session.add(complaint)
     db.session.flush()  # include this report when gathering descriptions below
 
-    # merges every report on this issue (not just the newest) into one
-    # secretary-facing summary — most valuable once a second resident joins
-    # an existing issue with their own wording
-    all_descriptions = [c.description for c in Complaint.query.filter_by(issue_id=issue.id).all()]
-    issue.ai_suggested_description = suggest_summary(issue.title, issue.category, all_descriptions)
+
+
+    # category/priority/summary all happen off-thread so the response above
+    # doesn't wait on OpenRouter — summary re-runs on every post (a join
+    # re-merges descriptions), category/priority only on a brand-new issue
+    flask_app = current_app._get_current_object()
+    threading.Thread(
+        target=_run_ai_suggestions,
+        args=(flask_app, issue.id, title, description, category, is_new_issue),
+        daemon=True,
+    ).start()
 
     db.session.commit()
 
@@ -364,6 +454,24 @@ def assign_vendor(id_):
 
     complaint = Complaint.query.get(id_)
     result = complaint_to_dict(complaint) if complaint else issue_to_dict(issue)
+
+    # notify the vendor on Telegram if they've connected their account
+    if vendor.telegram_chat_id:
+        from app.telegram_bot import send_telegram_message
+        reporter = complaint.resident if complaint else (issue.reports[0].resident if issue.reports else None)
+        flat_number = reporter.flat.flat_number if reporter and reporter.flat else 'N/A'
+        vendor_message = (
+            f'🔧 New Job Assigned — Niwaas RWA\n\n'
+            f'Complaint: {issue.title}\n'
+            f'Category: {issue.category}\n'
+            f'Description: {issue.description[:100]}\n'
+            f'Resident Flat: {flat_number}\n\n'
+            f'Please attend at the earliest.\n'
+            f'— Niwaas Secretary'
+        )
+        send_telegram_message(vendor.telegram_chat_id, vendor_message)
+    else:
+        print(f' * [telegram] vendor {vendor.id} has no telegram_chat_id, skipping notification', flush=True)
 
     return jsonify({
         'message':   f'Complaint assigned to {vendor.name}',

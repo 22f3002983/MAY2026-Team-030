@@ -466,49 +466,6 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- Recommendation panel -->
-    <div class="rec-panel">
-      <button class="rec-panel-toggle" @click="recOpen = !recOpen">
-        <span class="rec-ai-badge">✨ Suggest a fit (booking by phone)</span>
-        <span class="rec-chevron" :class="{ up: recOpen }">⌄</span>
-      </button>
-
-      <div v-if="recOpen" class="rec-panel-body">
-        <div class="rec-form-grid">
-          <div class="rec-field">
-            <label class="rec-field-label">Event type</label>
-            <select v-model="recEventType" class="rec-input">
-              <option v-for="t in EVENT_TYPES" :key="t" :value="t">{{ t }}</option>
-            </select>
-          </div>
-          <div class="rec-field">
-            <label class="rec-field-label">Guests</label>
-            <input type="number" min="1" v-model.number="recGuests" class="rec-input" />
-          </div>
-          <div class="rec-field">
-            <label class="rec-field-label">Budget (₹)</label>
-            <input type="number" min="0" step="100" v-model.number="recBudget" class="rec-input" />
-          </div>
-          <div class="rec-field">
-            <label class="rec-field-label">Duration (hrs, if hourly)</label>
-            <input type="number" min="1" v-model.number="recHours" class="rec-input" />
-          </div>
-        </div>
-        <button class="rec-get-btn" @click="getRecommendation">Get suggestions</button>
-
-        <div v-if="recResults" class="rec-results">
-          <div v-if="recResults.length === 0" class="rec-empty">No great match within these constraints.</div>
-          <div v-for="(r, i) in recResults" :key="r.amenity.id" class="rec-result-card">
-            <span class="rec-result-icon">{{ r.amenity.icon }}</span>
-            <div>
-              <div class="rec-result-name">{{ r.amenity.name }}<span v-if="i === 0" class="rec-best-tag">Best match</span></div>
-              <div class="rec-result-meta">Fits {{ r.amenity.capacity }} · ₹{{ r.estimatedPrice.toLocaleString('en-IN') }} est.</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
     <!-- exclusive -->
     <div class="section-title" style="margin-top: 24px">Exclusive Booking</div>
     <div class="amenity-grid">

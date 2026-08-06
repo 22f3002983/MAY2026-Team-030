@@ -3,6 +3,8 @@ import { ref, computed, onMounted } from 'vue'
 import api from '../../api/axios' // adjust this path to wherever your axios instance actually lives
 
 
+
+
 // =============================================================================
 // EVERYTHING for the resident Amenities experience lives in this one file:
 //   - data layer (fetch + normalize from the Flask backend)
@@ -17,6 +19,8 @@ import api from '../../api/axios' // adjust this path to wherever your axios ins
 // =============================================================================
 
 
+
+
 // ---------------------------------------------------------------------------
 // Data layer — normalize backend shape into what the templates expect
 // ---------------------------------------------------------------------------
@@ -24,6 +28,8 @@ const amenitiesRaw = ref([])
 const bookingsRaw = ref([])
 const loading = ref(false)
 const loadError = ref(null)
+
+
 
 
 function normalizeAmenity(a) {
@@ -52,6 +58,8 @@ function normalizeAmenity(a) {
 }
 
 
+
+
 // Backend only has pending/approved/rejected/cancelled + a separate
 // payment_status. We derive the richer display-only status set here.
 function bookingFrontendStatus(b) {
@@ -66,6 +74,8 @@ function bookingFrontendStatus(b) {
   }
   return b.status
 }
+
+
 
 
 function normalizeBooking(b) {
@@ -88,12 +98,18 @@ function normalizeBooking(b) {
 }
 
 
+
+
 function attachAmenity(b) {
   return { ...b, amenity: amenitiesRaw.value.find((a) => a.id === b.amenity_id) }
 }
 
 
+
+
 const amenities = computed(() => amenitiesRaw.value)
+
+
 
 
 const myBookings = computed(() =>
@@ -105,6 +121,8 @@ const myUpcomingBookings = computed(() =>
 const myPastBookings = computed(() =>
   myBookings.value.filter((b) => ['completed', 'cancelled', 'rejected'].includes(b.status))
 )
+
+
 
 
 async function fetchAmenities() {
@@ -120,10 +138,14 @@ async function fetchAmenities() {
 }
 
 
+
+
 async function fetchBookings() {
   const { data } = await api.get('/amenities/bookings')
   bookingsRaw.value = data.bookings.map(normalizeBooking)
 }
+
+
 
 
 // ---------------------------------------------------------------------------
@@ -151,6 +173,8 @@ function calculatePrice(amenity, units) {
 }
 
 
+
+
 // ---------------------------------------------------------------------------
 // Availability + booking actions
 // ---------------------------------------------------------------------------
@@ -160,6 +184,8 @@ async function checkAvailability(amenityId, { date, endDate, startTime, endTime 
   })
   return data
 }
+
+
 
 
 async function createBooking({ amenity, date, endDate, startTime, endTime, eventType, guests, reason }) {
@@ -183,6 +209,8 @@ async function cancelBookingApi(bookingId) {
 }
 
 
+
+
 async function payForBookingApi(bookingId) {
   const { data } = await api.patch(`/amenities/bookings/${bookingId}/pay`)
   const i = bookingsRaw.value.findIndex((b) => b.id === bookingId)
@@ -190,51 +218,16 @@ async function payForBookingApi(bookingId) {
 }
 
 
-// ---------------------------------------------------------------------------
-// Recommendation engine — purely client-side scoring, no backend endpoint
-// ---------------------------------------------------------------------------
-const EVENT_AFFINITY = {
-  'Birthday party': { 4: 3, 5: 3, 3: 2, 10: 2 },
-  'Wedding function': { 1: 3, 10: 1 },
-  'Family gathering': { 3: 3, 5: 2, 4: 2 },
-  'Movie / watch party': { 7: 3 },
-  'Kids party': { 3: 3, 4: 2, 5: 1 },
-  'Guests staying over': { 2: 3 },
-  'Small meeting': { 1: 2, 7: 1 },
-  'Sports session': { 6: 3 },
-}
-const EVENT_TYPES = Object.keys(EVENT_AFFINITY)
 
 
-function recommend({ eventType, guests, budget, hours = 3 }) {
-  const candidates = amenitiesRaw.value.filter((a) => isBookable(a) && a.status === 'available')
+// event types offered on the booking form itself (unrelated to the
+// recommendation panel, which is now AI-driven free text instead)
+const EVENT_TYPES = [
+  'Birthday party', 'Wedding function', 'Family gathering', 'Movie / watch party',
+  'Kids party', 'Guests staying over', 'Small meeting', 'Sports session',
+]
 
 
-  const scored = candidates.map((a) => {
-    let score = (EVENT_AFFINITY[eventType]?.[a.id] || 0) * 10
-
-
-    if (a.capacity && guests) {
-      score += a.capacity >= guests ? 15 - Math.min(15, (a.capacity - guests) * 0.3) : -20
-    }
-
-
-    const units = a.pricing.type === 'hourly' ? hours : 1
-    const price = calculatePrice(a, units)
-    if (budget) {
-      score += price <= budget ? 10 - Math.min(10, ((budget - price) / budget) * 10) : -15
-    }
-
-
-    return { amenity: a, score, estimatedPrice: price }
-  })
-
-
-  return scored
-    .filter((s) => s.score > -10)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 3)
-}
 
 
 // =============================================================================
@@ -244,9 +237,13 @@ const successMsg = ref('')
 const showBookingsHistory = ref(false)
 
 
+
+
 const exclusiveAmenities = computed(() => amenities.value.filter(a => a.category === 'exclusive'))
 const publicAmenities = computed(() => amenities.value.filter(a => a.category === 'public'))
 const infraAmenities = computed(() => amenities.value.filter(a => a.category === 'unbookable'))
+
+
 
 
 function handleCancel(booking) {
@@ -254,6 +251,8 @@ function handleCancel(booking) {
     cancelBookingApi(booking.id)
   }
 }
+
+
 
 
 function handlePay(booking) {
@@ -264,25 +263,49 @@ function handlePay(booking) {
 }
 
 
+
+
 // =============================================================================
-// RECOMMENDATION PANEL STATE (was RecommendationPanel.vue)
+// RECOMMENDATION PANEL STATE — AI-driven ("Find the Right Place")
+// Free-text query -> POST /api/amenities/recommend -> a short recommendation
+// generated from the current amenity list. Result stays on screen until the
+// resident submits a new query (not cleared just by editing the input).
 // =============================================================================
 const recOpen = ref(false)
-const recEventType = ref(EVENT_TYPES[0])
-const recGuests = ref(20)
-const recBudget = ref(2000)
-const recHours = ref(3)
-const recResults = ref(null)
+const recQuery = ref('')
+const recLoading = ref(false)
+const recResult = ref('')
+const recUnavailable = ref(false)
 
 
-function getRecommendation() {
-  recResults.value = recommend({
-    eventType: recEventType.value,
-    guests: recGuests.value,
-    budget: recBudget.value,
-    hours: recHours.value,
-  })
+async function getRecommendation() {
+  const query = recQuery.value.trim()
+  if (!query || recLoading.value) return
+
+
+  // clear the previous answer immediately so it doesn't sit on screen while
+  // the new search is loading — only the spinner should show
+  recResult.value = ''
+  recUnavailable.value = false
+  recLoading.value = true
+  try {
+    const res = await api.post('/amenities/recommend', { query })
+    if (res.data.recommendation) {
+      recResult.value = res.data.recommendation
+    } else {
+      recResult.value = ''
+      recUnavailable.value = true
+    }
+  } catch (err) {
+    console.error('Failed to get amenity recommendation', err)
+    recResult.value = ''
+    recUnavailable.value = true
+  } finally {
+    recLoading.value = false
+  }
 }
+
+
 
 
 // =============================================================================
@@ -293,10 +316,14 @@ const showModal = ref(false)
 const modalStep = ref('detail') // 'detail' | 'book'
 
 
+
+
 const isHourly = computed(() => selectedAmenity.value?.pricing?.type === 'hourly')
 const bookable = computed(() =>
   selectedAmenity.value ? isBookable(selectedAmenity.value) && selectedAmenity.value.status !== 'maintenance' : false
 )
+
+
 
 
 // detail step: availability checker
@@ -307,10 +334,14 @@ const availResult = ref(null)
 const checking = ref(false)
 
 
+
+
 // book step
 const bookForm = ref({ date: '', startTime: '18:00', endTime: '20:00', eventType: EVENT_TYPES[0], guests: 10 })
 const bookError = ref('')
 const bookSubmitting = ref(false)
+
+
 
 
 function openDetail(amenity) {
@@ -323,10 +354,14 @@ function openDetail(amenity) {
 }
 
 
+
+
 function closeModal() {
   showModal.value = false
   selectedAmenity.value = null
 }
+
+
 
 
 async function runCheck() {
@@ -344,6 +379,8 @@ async function runCheck() {
 }
 
 
+
+
 function goToBook() {
   if (checkDate.value) bookForm.value.date = checkDate.value
   if (isHourly.value) {
@@ -352,6 +389,8 @@ function goToBook() {
   }
   modalStep.value = 'book'
 }
+
+
 
 
 async function submitBooking() {
@@ -395,12 +434,16 @@ async function submitBooking() {
 }
 
 
+
+
 // =============================================================================
 onMounted(() => {
   fetchAmenities()
   fetchBookings()
 })
 </script>
+
+
 
 
 <template>
@@ -413,61 +456,52 @@ onMounted(() => {
     </div>
 
 
+
+
     <div v-if="successMsg" class="success-banner">✓ {{ successMsg }}</div>
 
 
-    <!-- ============ RECOMMENDATION PANEL ============ -->
+
+
+    <!-- ============ RECOMMENDATION PANEL (AI-driven) ============ -->
     <div class="rec-panel">
       <button class="rec-panel-toggle" @click="recOpen = !recOpen">
-        <span class="rec-ai-badge">✨ Find the right place</span>
+        <span class="rec-ai-badge">🤖 Find the right place</span>
         <span class="rec-chevron" :class="{ up: recOpen }">⌄</span>
       </button>
 
 
+
+
       <div v-if="recOpen" class="rec-panel-body">
-        <p class="rec-panel-sub">Tell us about your event and we'll suggest the best fit.</p>
+        <p class="rec-panel-sub">Tell us what you're looking for and we'll suggest the best fit — e.g. "I want a place to swim" or "a quiet room for a meeting".</p>
 
 
-        <div class="rec-form-grid">
-          <div class="rec-field">
-            <label class="rec-field-label">Event type</label>
-            <select v-model="recEventType" class="rec-input">
-              <option v-for="t in EVENT_TYPES" :key="t" :value="t">{{ t }}</option>
-            </select>
-          </div>
-          <div class="rec-field">
-            <label class="rec-field-label">Guests</label>
-            <input type="number" min="1" v-model.number="recGuests" class="rec-input" />
-          </div>
-          <div class="rec-field">
-            <label class="rec-field-label">Budget (₹)</label>
-            <input type="number" min="0" step="100" v-model.number="recBudget" class="rec-input" />
-          </div>
-          <div class="rec-field">
-            <label class="rec-field-label">Duration (hrs, if hourly)</label>
-            <input type="number" min="1" v-model.number="recHours" class="rec-input" />
-          </div>
+
+
+        <div class="rec-query-row">
+          <input
+            v-model="recQuery"
+            type="text"
+            class="rec-input rec-query-input"
+            placeholder="What are you looking for?"
+            @keyup.enter="getRecommendation"
+          />
+          <button class="rec-get-btn" :disabled="!recQuery.trim() || recLoading" @click="getRecommendation">
+            <span v-if="recLoading" class="rec-spinner"></span>
+            {{ recLoading ? 'Finding...' : 'Find' }}
+          </button>
         </div>
 
 
-        <button class="rec-get-btn" @click="getRecommendation">Get suggestions</button>
 
 
-        <div v-if="recResults" class="rec-results">
-          <div v-if="recResults.length === 0" class="rec-empty">No great match within these constraints — try a higher budget or fewer guests.</div>
-          <div v-for="(r, i) in recResults" :key="r.amenity.id" class="rec-result-card">
-            <div class="rec-result-top">
-              <span class="rec-result-icon">{{ r.amenity.icon }}</span>
-              <div>
-                <div class="rec-result-name">{{ r.amenity.name }}<span v-if="i === 0" class="rec-best-tag">Best match</span></div>
-                <div class="rec-result-meta">Fits {{ r.amenity.capacity }} · ₹{{ r.estimatedPrice.toLocaleString('en-IN') }} est.</div>
-              </div>
-            </div>
-            <button class="rec-view-btn" @click="openDetail(r.amenity)">View & book</button>
-          </div>
-        </div>
+        <div v-if="recResult" class="rec-answer-card">🤖 {{ recResult }}</div>
+        <div v-else-if="recUnavailable" class="rec-answer-card rec-answer-unavailable">AI recommendation unavailable</div>
       </div>
     </div>
+
+
 
 
     <!-- My bookings -->
@@ -494,6 +528,8 @@ onMounted(() => {
       </div>
 
 
+
+
       <button v-if="myPastBookings.length" class="toggle-history" @click="showBookingsHistory = !showBookingsHistory">
         {{ showBookingsHistory ? 'Hide' : 'Show' }} past bookings ({{ myPastBookings.length }})
       </button>
@@ -510,9 +546,13 @@ onMounted(() => {
     </div>
 
 
+
+
     <!-- exclusive -->
     <div class="section-title" style="margin-top: 32px">Exclusive Booking</div>
     <p class="section-sub">These facilities can be reserved for your exclusive use</p>
+
+
 
 
     <div class="amenity-grid">
@@ -539,9 +579,13 @@ onMounted(() => {
     </div>
 
 
+
+
     <!-- public -->
     <div class="section-title" style="margin-top: 32px">Shared Facilities</div>
     <p class="section-sub">No booking needed — open to all residents</p>
+
+
 
 
     <div class="amenity-grid">
@@ -566,9 +610,13 @@ onMounted(() => {
     </div>
 
 
+
+
     <!-- infrastructure -->
     <div class="section-title" style="margin-top: 32px">Infrastructure</div>
     <p class="section-sub">Common infrastructure — for information only, not bookable</p>
+
+
 
 
     <div class="amenity-grid">
@@ -593,10 +641,14 @@ onMounted(() => {
     </div>
 
 
+
+
     <!-- ============ DETAIL / BOOK MODAL ============ -->
     <div v-if="showModal && selectedAmenity" class="modal-overlay" @click.self="closeModal">
       <div class="modal-sheet">
         <button class="modal-close-btn" @click="closeModal">✕</button>
+
+
 
 
         <div class="modal-hero" :class="{ infra: selectedAmenity.category === 'unbookable' }">
@@ -608,12 +660,16 @@ onMounted(() => {
         </div>
 
 
+
+
         <div class="modal-content">
           <!-- DETAIL STEP -->
           <template v-if="modalStep === 'detail'">
             <h3>{{ selectedAmenity.name }}</h3>
             <p class="modal-location">📍 {{ selectedAmenity.location }}</p>
             <p class="modal-desc">{{ selectedAmenity.description }}</p>
+
+
 
 
             <div class="modal-spec-grid">
@@ -625,14 +681,20 @@ onMounted(() => {
             </div>
 
 
+
+
             <div v-if="selectedAmenity.features?.length" class="modal-features">
               <span v-for="f in selectedAmenity.features" :key="f" class="modal-feature-chip">{{ f }}</span>
             </div>
 
 
+
+
             <div v-if="selectedAmenity.special_booking" class="modal-special-note">
               Normally a shared facility — can be booked exclusively for private events with secretary approval.
             </div>
+
+
 
 
             <div v-if="bookable" class="modal-availability-box">
@@ -652,6 +714,8 @@ onMounted(() => {
             </div>
 
 
+
+
             <div class="modal-actions">
               <button v-if="bookable" class="modal-book-btn" @click="goToBook">
                 {{ selectedAmenity.booking_type === 'approval_required' ? 'Request booking' : 'Book now' }}
@@ -663,6 +727,8 @@ onMounted(() => {
           </template>
 
 
+
+
           <!-- BOOK STEP -->
           <template v-else>
             <button class="modal-back-link" @click="modalStep = 'detail'">← Back to details</button>
@@ -670,8 +736,12 @@ onMounted(() => {
             <span class="modal-sub">{{ selectedAmenity.booking_type === 'automatic' ? 'Auto-approved' : 'Requires secretary approval' }}</span>
 
 
+
+
             <label class="modal-form-label">Date</label>
             <input v-model="bookForm.date" type="date" class="modal-n-input" />
+
+
 
 
             <div class="modal-time-row" v-if="isHourly">
@@ -686,17 +756,25 @@ onMounted(() => {
             </div>
 
 
+
+
             <label class="modal-form-label">Event type</label>
             <select v-model="bookForm.eventType" class="modal-n-input">
               <option v-for="t in EVENT_TYPES" :key="t" :value="t">{{ t }}</option>
             </select>
 
 
+
+
             <label class="modal-form-label">Guests</label>
             <input v-model.number="bookForm.guests" type="number" min="1" class="modal-n-input" />
 
 
+
+
             <p v-if="bookError" class="modal-error-msg">{{ bookError }}</p>
+
+
 
 
             <div class="modal-actions">
@@ -712,8 +790,12 @@ onMounted(() => {
 </template>
 
 
+
+
 <style scoped>
 .amenities { max-width: var(--content-max-width); }
+
+
 
 
 .success-banner {
@@ -723,14 +805,20 @@ onMounted(() => {
 }
 
 
+
+
 .page-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 24px; }
 .page-header h2 { font-size: var(--font-size-3xl); font-weight: 800; letter-spacing: -0.4px; }
 .page-sub { font-size: var(--font-size-sm); color: var(--color-text-muted); margin-top: 4px; }
 
 
+
+
 .section-title { font-size: var(--font-size-xl); font-weight: 700; color: var(--color-text-primary); margin-bottom: 4px; }
 .section-sub { font-size: var(--font-size-sm); color: var(--color-text-muted); margin-bottom: 16px; }
 .refund-note { font-size: var(--font-size-xs); color: var(--color-text-muted); margin-bottom: 12px; }
+
+
 
 
 /* ---------- Recommendation panel ---------- */
@@ -747,44 +835,47 @@ onMounted(() => {
 .rec-chevron.up { transform: rotate(180deg); }
 
 
+
+
 .rec-panel-body { padding: 18px; }
 .rec-panel-sub { font-size: var(--font-size-sm); color: var(--color-text-muted); margin-bottom: 14px; }
 
 
-.rec-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
-.rec-field { display: flex; flex-direction: column; gap: 4px; }
-.rec-field-label { font-size: var(--font-size-xs); font-weight: 700; color: var(--color-text-secondary); }
+
+
 .rec-input {
   border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 8px 10px;
   font-size: var(--font-size-sm); background: var(--color-surface); color: var(--color-text-primary);
 }
 
 
+.rec-query-row { display: flex; gap: 10px; margin-bottom: 14px; }
+.rec-query-input { flex: 1; font-family: var(--font-family); }
+
+
 .rec-get-btn {
-  width: 100%; height: 40px; border-radius: var(--radius-md); background: var(--c-900); color: #fff;
-  font-weight: 700; font-size: var(--font-size-sm);
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  height: 38px; padding: 0 18px; border-radius: var(--radius-md); background: var(--c-900); color: #fff;
+  font-weight: 700; font-size: var(--font-size-sm); white-space: nowrap; flex-shrink: 0;
 }
-.rec-get-btn:hover { background: var(--c-800); }
+.rec-get-btn:hover:not(:disabled) { background: var(--c-800); }
+.rec-get-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 
-.rec-results { margin-top: 16px; display: flex; flex-direction: column; gap: 10px; }
-.rec-empty { font-size: var(--font-size-sm); color: var(--color-text-muted); }
-.rec-result-card {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 12px; border-radius: var(--radius-md); background: var(--badge-closed-bg);
+.rec-spinner {
+  width: 12px; height: 12px; border: 2px solid rgba(255,255,255,0.4); border-top-color: #fff;
+  border-radius: 50%; animation: rec-spin 0.7s linear infinite; flex-shrink: 0;
 }
-.rec-result-top { display: flex; align-items: center; gap: 10px; }
-.rec-result-icon { font-size: 26px; }
-.rec-result-name { font-weight: 700; font-size: var(--font-size-sm); color: var(--color-text-primary); display: flex; align-items: center; gap: 8px; }
-.rec-best-tag {
-  font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: var(--radius-pill);
-  background: var(--color-success-bg); color: var(--color-success-text);
+@keyframes rec-spin { to { transform: rotate(360deg); } }
+
+
+.rec-answer-card {
+  padding: 14px 16px; border-radius: var(--radius-md); background: var(--badge-closed-bg);
+  color: var(--color-text-primary); font-size: var(--font-size-sm); line-height: 1.55;
 }
-.rec-result-meta { font-size: var(--font-size-xs); color: var(--color-text-muted); margin-top: 2px; }
-.rec-view-btn {
-  padding: 6px 14px; border-radius: var(--radius-md); background: var(--c-900); color: #fff;
-  font-size: var(--font-size-xs); font-weight: 700; white-space: nowrap;
-}
+.rec-answer-unavailable { color: var(--color-text-muted); font-style: italic; }
+
+
 
 
 /* ---------- My bookings ---------- */
@@ -816,15 +907,21 @@ onMounted(() => {
 .toggle-history { margin-top: 12px; font-size: var(--font-size-xs); color: var(--c-900); font-weight: 700; }
 
 
+
+
 /* ---------- Grid & cards ---------- */
 .amenity-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; margin-bottom: 8px; }
 .amenity-card { background: var(--color-surface); border-radius: var(--radius-xl); border: 1px solid var(--color-border); overflow: hidden; box-shadow: var(--shadow-sm); transition: box-shadow var(--transition-fast); cursor: pointer; }
 .amenity-card:hover { box-shadow: var(--shadow-md); }
 
 
+
+
 .card-header-area { background: linear-gradient(155deg, var(--c-900) 0%, var(--c-500) 100%); height: 110px; display: flex; align-items: center; justify-content: center; position: relative; padding: 16px; }
 .card-header-area.infra { background: linear-gradient(155deg, #2d3748 0%, #4a5568 100%); }
 .card-icon { font-size: 36px; filter: grayscale(1) brightness(5); }
+
+
 
 
 .status-tag { position: absolute; top: 12px; right: 12px; display: flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: var(--radius-pill); font-size: var(--font-size-xs); font-weight: 700; background: rgba(255,255,255,0.92); }
@@ -839,10 +936,14 @@ onMounted(() => {
 .status-tag.closed .status-dot { background: var(--badge-closed-text); }
 
 
+
+
 .card-body-area { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .amenity-name { display: block; font-size: var(--font-size-lg); font-weight: 700; color: var(--color-text-primary); margin-bottom: 4px; }
 .amenity-desc { font-size: var(--font-size-sm); color: var(--color-text-secondary); line-height: 1.5; }
 .card-body-bottom { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; flex-wrap: wrap; gap: 6px; }
+
+
 
 
 .exclusive-tag { padding: 4px 12px; border-radius: var(--radius-pill); background: var(--color-warning-bg); color: var(--color-warning-text); font-size: var(--font-size-xs); font-weight: 700; }
@@ -850,9 +951,13 @@ onMounted(() => {
 .info-tag { padding: 4px 12px; border-radius: var(--radius-pill); background: var(--badge-closed-bg); color: var(--badge-closed-text); font-size: var(--font-size-xs); font-weight: 700; }
 
 
+
+
 .book-btn { height: 36px; padding: 0 20px; border-radius: var(--radius-md); background: var(--c-900); color: #fff; font-size: var(--font-size-sm); font-weight: 700; transition: background var(--transition-fast); }
 .book-btn:hover { background: var(--c-800); }
 .unavailable-label { font-size: var(--font-size-xs); color: var(--color-text-muted); font-weight: 600; }
+
+
 
 
 /* ---------- Modal ---------- */
@@ -868,6 +973,8 @@ onMounted(() => {
 .modal-status-tag.maintenance .modal-status-dot { background: var(--color-warning); }
 
 
+
+
 .modal-content { padding: 20px; }
 .modal-content h3 { font-size: var(--font-size-xl); font-weight: 800; color: var(--color-text-primary); }
 .modal-sub { font-size: var(--font-size-xs); color: var(--color-text-muted); }
@@ -875,7 +982,11 @@ onMounted(() => {
 .modal-desc { font-size: var(--font-size-sm); color: var(--color-text-secondary); margin-top: 10px; line-height: 1.5; }
 
 
+
+
 .modal-back-link { font-size: var(--font-size-xs); font-weight: 700; color: var(--c-800); margin-bottom: 10px; }
+
+
 
 
 .modal-spec-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; margin-top: 16px; }
@@ -884,11 +995,17 @@ onMounted(() => {
 .modal-spec-value { font-size: var(--font-size-sm); font-weight: 700; color: var(--color-text-primary); }
 
 
+
+
 .modal-features { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 16px; }
 .modal-feature-chip { font-size: var(--font-size-xs); padding: 4px 10px; border-radius: var(--radius-pill); background: var(--badge-closed-bg); color: var(--color-text-secondary); }
 
 
+
+
 .modal-special-note { margin-top: 14px; font-size: var(--font-size-xs); color: var(--color-warning-text); background: var(--color-warning-bg); padding: 8px 12px; border-radius: var(--radius-md); }
+
+
 
 
 .modal-availability-box { margin-top: 18px; padding: 14px; border-radius: var(--radius-md); background: var(--badge-closed-bg); }
@@ -903,6 +1020,8 @@ onMounted(() => {
 .modal-avail-result.busy { color: var(--color-warning-text); }
 
 
+
+
 .modal-form-label { display: block; font-size: var(--font-size-sm); font-weight: 600; color: var(--c-800); margin-top: 10px; margin-bottom: 4px; }
 .modal-n-input { width: 100%; height: 42px; padding: 0 13px; border: 1.5px solid var(--color-border-soft); border-radius: var(--radius-md); font-size: var(--font-size-md); background: var(--color-surface-soft); color: var(--color-text-primary); outline: none; font-family: var(--font-family); }
 .modal-n-input:focus { border-color: var(--c-600); }
@@ -911,9 +1030,14 @@ onMounted(() => {
 .modal-error-msg { font-size: var(--font-size-sm); color: var(--color-danger); margin-top: 6px; }
 
 
+
+
 .modal-actions { margin-top: 20px; }
 .modal-book-btn { width: 100%; height: 44px; border-radius: var(--radius-md); background: var(--c-900); color: #fff; font-size: var(--font-size-md); font-weight: 700; }
 .modal-book-btn:hover { background: var(--c-800); }
 .modal-book-btn:disabled { opacity: 0.6; }
 .modal-info-note { font-size: var(--font-size-sm); color: var(--color-text-muted); }
 </style>
+
+
+

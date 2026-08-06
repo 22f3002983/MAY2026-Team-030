@@ -3,6 +3,7 @@ from flask_login import login_required, current_user
 from app.extensions import db
 from app.models.amenity import Amenity
 from app.models.booking import Booking
+from app.services.ai_amenity_recommendation import recommend_amenity
 from datetime import datetime, time
 import uuid
 import json
@@ -96,6 +97,40 @@ def find_conflicts(amenity, date, end_date, start_time, end_time):
 def list_amenities():
     amenities = Amenity.query.order_by(Amenity.name).all()
     return jsonify({'amenities': [amenity_to_dict(a) for a in amenities]}), 200
+
+# ── POST /api/amenities/recommend — AI amenity recommendation ──
+# Any logged-in role; free-text query, e.g. "I want a place to swim".
+
+@amenities_bp.route('/recommend', methods=['POST'])
+@login_required
+def recommend_amenity_endpoint():
+    data = request.get_json() or {}
+    query = (data.get('query') or '').strip()
+
+
+    if not query:
+        return jsonify({'error': 'query is required'}), 400
+
+
+    amenities = Amenity.query.order_by(Amenity.name).all()
+
+
+    if not amenities:
+        return jsonify({
+            'recommendation': 'No amenities are currently listed in the society. Please check with the secretary.',
+        }), 200
+
+
+    amenity_data = [
+        {'name': a.name, 'type': a.type, 'status': a.status, 'description': a.description}
+        for a in amenities
+    ]
+
+
+    recommendation = recommend_amenity(amenity_data, query)
+
+
+    return jsonify({'recommendation': recommendation}), 200
 
 
 # ── GET /api/amenities/bookings — role-based booking list ──────

@@ -108,6 +108,30 @@ def create_alert():
 
     db.session.add(alert)
     db.session.commit()
+    
+    from app.telegram_bot import send_telegram_message_bulk
+    from app.models.resident import Resident
+    from app.models.secretary import Secretary
+    from app.models.security import Security
+
+
+    telegram_message = (
+        f'🚨 EMERGENCY ALERT — Niwaas RWA\n\n'
+        f'Message: {message}\n'
+        f'Type: {alert_type}\n'
+        f'Raised by: {current_user.role}\n\n'
+        f'Please take immediate action.'
+    )
+
+
+    chat_ids = [s.telegram_chat_id for s in Secretary.query.filter(Secretary.telegram_chat_id.isnot(None)).all()]
+    chat_ids += [s.telegram_chat_id for s in Security.query.filter(Security.telegram_chat_id.isnot(None)).all()]
+    if alert_type == 'Public':
+        chat_ids += [r.telegram_chat_id for r in Resident.query.filter(Resident.telegram_chat_id.isnot(None)).all()]
+
+
+    send_telegram_message_bulk(chat_ids, telegram_message)
+
 
     return jsonify({
         'message': 'Emergency alert sent',

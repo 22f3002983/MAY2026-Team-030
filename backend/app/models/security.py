@@ -7,6 +7,7 @@ class Security(db.Model):
     user_id    = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=False)
     name       = db.Column(db.String(100), nullable=False)
     phone      = db.Column(db.String(20),  nullable=False)
+    telegram_chat_id = db.Column(db.String(64), nullable=True)
     created_at = db.Column(db.DateTime, default=__import__('datetime').datetime.utcnow)
 
     def __repr__(self):

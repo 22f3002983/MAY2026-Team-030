@@ -457,7 +457,7 @@ def assign_vendor(id_):
 
     # notify the vendor on Telegram if they've connected their account
     if vendor.telegram_chat_id:
-        from app.telegram_bot import send_telegram_message
+        from backend.app.telegram_bot import send_telegram_message
         reporter = complaint.resident if complaint else (issue.reports[0].resident if issue.reports else None)
         flat_number = reporter.flat.flat_number if reporter and reporter.flat else 'N/A'
         vendor_message = (

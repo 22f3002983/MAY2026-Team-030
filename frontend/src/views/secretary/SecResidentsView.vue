@@ -249,7 +249,7 @@ function duesStatusOf(resident) {
             </td>
             <td>
               <span :class="['onboard-badge', r.is_onboarded ? 'active' : 'pending']">
-                {{ r.is_onboarded ? 'Active' : 'Pending' }}
+                {{ r.is_onboarded ? 'Active' : 'Pending onboarding' }}
               </span>
             </td>
           </tr>
@@ -518,7 +518,7 @@ function duesStatusOf(resident) {
 
 .residents-table th {
   padding: 12px 20px;
-  text-align: left;
+  text-align: center;
   font-size: var(--font-size-xs);
   font-weight: 700;
   color: var(--color-text-muted);
@@ -532,6 +532,7 @@ function duesStatusOf(resident) {
   padding: 14px 20px;
   border-bottom: 1px solid var(--color-border);
   vertical-align: middle;
+  text-align: center;
 }
 
 .residents-table tbody tr:last-child td { border-bottom: none; }

@@ -2,6 +2,8 @@ from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user
 from app.extensions import db
 from app.models.vendor import Vendor
+from app.routes.funds import debit_fund, build_fallback_plan, FALLBACK_FUND_ORDER
+from datetime import datetime
 import uuid
 
 vendors_bp = Blueprint('vendors', __name__)
@@ -156,3 +158,112 @@ def delete_vendor(vendor_id):
     db.session.commit()
 
     return jsonify({'message': f'{vendor.name} removed successfully'}), 200
+
+
+# ── shared validation for the salary-payment endpoints ────────
+
+def _validate_salary_vendors(vendor_ids):
+    """Returns (vendors, error_response). error_response is None on success."""
+    if not vendor_ids or not isinstance(vendor_ids, list):
+        return None, (jsonify({'error': 'vendor_ids (list) is required'}), 400)
+
+    vendors = []
+    for vendor_id in vendor_ids:
+        vendor = Vendor.query.get(vendor_id)
+        if not vendor:
+            return None, (jsonify({'error': f'Vendor {vendor_id} not found'}), 404)
+        if not vendor.is_salaried or not vendor.salary:
+            return None, (jsonify({'error': f'{vendor.name} is not a salaried vendor'}), 400)
+        if vendor.status != 'active':
+            return None, (jsonify({'error': f'{vendor.name} is inactive'}), 400)
+        vendors.append(vendor)
+    return vendors, None
+
+
+# ── POST /api/vendors/pay-salaries/preview — dry-run the payment (secretary only) ──
+#
+# Shows exactly which fund(s) the payment will come from before the
+# secretary commits to it: operating first, then contingency, then sinking
+# if the first two together still aren't enough. Nothing is written to the
+# DB here.
+
+@vendors_bp.route('/pay-salaries/preview', methods=['POST'])
+@login_required
+def preview_pay_salaries():
+    if current_user.role != 'secretary':
+        return jsonify({'error': 'Only secretary can pay vendor salaries'}), 403
+
+    data = request.get_json() or {}
+    vendors, err = _validate_salary_vendors(data.get('vendor_ids'))
+    if err:
+        return err
+
+    items = [(v.id, float(v.salary)) for v in vendors]
+    allocations, fund_summary, shortfall = build_fallback_plan(items)
+    total = sum(a for _, a in items)
+
+    return jsonify({
+        'vendors':    [{'id': v.id, 'name': v.name, 'salary': float(v.salary)} for v in vendors],
+        'total':      total,
+        'funds':      fund_summary,
+        'shortfall':  shortfall,
+        'sufficient': shortfall <= 0,
+    }), 200
+
+
+# ── POST /api/vendors/pay-salaries — pay one or more salaried vendors (secretary only) ──
+#
+# Recomputes the same fallback plan the preview showed and executes it:
+# draws from operating first, then contingency, then sinking if needed,
+# splitting a single vendor's salary across funds if a fund runs out
+# mid-payment. Every draw is written to the funds ledger (source=
+# 'vendor_salary', reference_id=vendor.id) so it shows up in the funds
+# transaction history and actually reduces the real balance.
+
+@vendors_bp.route('/pay-salaries', methods=['POST'])
+@login_required
+def pay_salaries():
+    if current_user.role != 'secretary':
+        return jsonify({'error': 'Only secretary can pay vendor salaries'}), 403
+
+    data = request.get_json() or {}
+    vendors, err = _validate_salary_vendors(data.get('vendor_ids'))
+    if err:
+        return err
+
+    vendors_by_id = {v.id: v for v in vendors}
+    items = [(v.id, float(v.salary)) for v in vendors]
+    allocations, fund_summary, shortfall = build_fallback_plan(items)
+
+    if shortfall > 0:
+        covered = sum(a['amount'] for a in allocations)
+        return jsonify({
+            'error': (
+                f"{', '.join(f.title() for f in FALLBACK_FUND_ORDER)} funds together only cover "
+                f'₹{covered:,.2f} of the ₹{covered + shortfall:,.2f} needed — short by ₹{shortfall:,.2f}.'
+            ),
+            'funds':     fund_summary,
+            'shortfall': shortfall,
+        }), 400
+
+    month_label = datetime.utcnow().strftime('%b %Y')
+    for alloc in allocations:
+        vendor = vendors_by_id[alloc['label']]
+        debit_fund(
+            alloc['fund_name'],
+            alloc['amount'],
+            source='vendor_salary',
+            reference_id=vendor.id,
+            description=f"Salary payment — {vendor.name} ({month_label})",
+            created_by=current_user.secretary.id,
+        )
+
+    db.session.commit()
+
+    total = sum(float(v.salary) for v in vendors)
+    return jsonify({
+        'message':    f'Paid {len(vendors)} vendor(s) · ₹{total} total',
+        'paid_count': len(vendors),
+        'total_paid': total,
+        'funds':      fund_summary,
+    }), 201

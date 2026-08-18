@@ -13,6 +13,12 @@ DEFAULT_CONFIG = (
     ('contingency',  10),
 )
 
+# Order salary payments (and anything else that needs to cascade across
+# funds) draw from when the primary fund can't cover the full amount.
+# Sinking is last because it's the long-term reserve — the fund you touch
+# only once operating and contingency are both dry.
+FALLBACK_FUND_ORDER = ('operating', 'contingency', 'sinking')
+
 
 # ── helpers ───────────────────────────────────────────────────
 
@@ -108,6 +114,84 @@ def distribute_payment(amount, source, reference_id=None, description=None, crea
     db.session.commit()
 
 
+def debit_fund(fund_name, amount, source, description=None, reference_id=None, created_by=None):
+    """Deduct amount from a specific fund's balance and record the ledger
+    entry. Raises ValueError (caller turns this into an HTTP 400) if the
+    fund doesn't have enough balance to cover it."""
+    ensure_default_config()
+    amount = float(amount)
+    fund = get_or_create_fund(fund_name)
+    if float(fund.balance) < amount:
+        raise ValueError(f'Insufficient balance in {fund_name} fund (₹{fund.balance} available, ₹{amount} needed)')
+
+    fund.balance = float(fund.balance) - amount
+    db.session.add(FundTransaction(
+        id=str(uuid.uuid4()),
+        fund_name=fund_name,
+        type='debit',
+        amount=amount,
+        source=source,
+        reference_id=reference_id,
+        description=description,
+        created_by=created_by,
+    ))
+    return fund
+
+
+def fund_snapshot(fund_names=FALLBACK_FUND_ORDER):
+    """Current balance of each named fund — read-only, doesn't touch the DB
+    beyond ensure_default_config()/get_or_create_fund's usual lazy-seed."""
+    ensure_default_config()
+    return {fn: float(get_or_create_fund(fn).balance) for fn in fund_names}
+
+
+def build_fallback_plan(items):
+    """Plan (but don't execute) debiting `items` — a list of (label, amount)
+    pairs, e.g. one per vendor being paid — against FALLBACK_FUND_ORDER.
+    Each item draws from whichever fund in the order still has balance,
+    splitting across funds if one runs dry mid-item, so a single vendor's
+    salary can legitimately show up as two ledger entries from two funds.
+
+    Returns (allocations, fund_summary, shortfall):
+      allocations  = [{'label', 'fund_name', 'amount'}, ...] — feed straight
+                      into debit_fund() per entry to execute the plan.
+      fund_summary = [{'fund_name', 'balance_before', 'amount_drawn',
+                        'balance_after'}, ...] for every fund in the
+                      fallback order, for showing the secretary what's about
+                      to happen before they confirm.
+      shortfall    = amount that couldn't be covered by any of the funds.
+    """
+    balances = fund_snapshot()
+    starting = dict(balances)
+    cursor = 0
+    allocations = []
+    shortfall = 0.0
+
+    for label, amount in items:
+        remaining = float(amount)
+        while remaining > 0.005 and cursor < len(FALLBACK_FUND_ORDER):
+            fname = FALLBACK_FUND_ORDER[cursor]
+            avail = balances[fname]
+            if avail <= 0.005:
+                cursor += 1
+                continue
+            draw = min(avail, remaining)
+            allocations.append({'label': label, 'fund_name': fname, 'amount': round(draw, 2)})
+            balances[fname] -= draw
+            remaining -= draw
+        if remaining > 0.005:
+            shortfall += remaining
+
+    fund_summary = [{
+        'fund_name':      fn,
+        'balance_before': round(starting[fn], 2),
+        'amount_drawn':   round(starting[fn] - balances[fn], 2),
+        'balance_after':  round(balances[fn], 2),
+    } for fn in FALLBACK_FUND_ORDER]
+
+    return allocations, fund_summary, round(shortfall, 2)
+
+
 # ── GET /api/funds — list fund balances (secretary only) ─────
 
 @funds_bp.route('', methods=['GET'])
@@ -190,9 +274,15 @@ def list_transactions():
         return jsonify({'error': 'Only secretary can view fund transactions'}), 403
 
     fund_name = request.args.get('fund_name')
+    source    = request.args.get('source')
+    reference_id = request.args.get('reference_id')
     query = FundTransaction.query
     if fund_name:
         query = query.filter_by(fund_name=fund_name)
+    if source:
+        query = query.filter_by(source=source)
+    if reference_id:
+        query = query.filter_by(reference_id=reference_id)
 
     txns = query.order_by(FundTransaction.created_at.desc()).all()
     return jsonify({

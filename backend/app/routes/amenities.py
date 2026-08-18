@@ -4,6 +4,7 @@ from app.extensions import db
 from app.models.amenity import Amenity
 from app.models.booking import Booking
 from app.services.ai_amenity_recommendation import recommend_amenity
+from app.routes.funds import distribute_payment
 from datetime import datetime, time
 import uuid
 import json
@@ -296,7 +297,16 @@ def pay_booking(booking_id):
         return jsonify({'error': 'No payment pending for this booking'}), 400
 
     booking.payment_status = 'paid'
-    db.session.commit()
+
+    # amenity booking fee is a real payment reaching the society — split it
+    # across the funds like any other incoming payment (mirrors dues.py)
+    distribute_payment(
+        booking.price,
+        source='amenity_booking',
+        reference_id=booking.id,
+        description=f'Amenity booking payment — {booking.amenity.name} ({booking.date.isoformat()})',
+        created_by=None,
+    )
 
     return jsonify({'message': 'Payment recorded', 'booking': booking_to_dict(booking)}), 200
 

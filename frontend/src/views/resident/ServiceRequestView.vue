@@ -405,10 +405,10 @@ async function rate(r, stars) {
               <span class="detail-label">{{ r.status === 'Cancelled' ? 'Was scheduled for' : 'Scheduled for' }}</span>
               <span class="detail-value">{{ formatDate(r.date) }}, {{ r.time }}</span>
             </div>
-            <div class="detail-item">
+            <!-- <div class="detail-item">
               <span class="detail-label">Estimated time</span>
               <span class="detail-value">{{ r.duration || '—' }}</span>
-            </div>
+            </div> -->
             <div class="detail-item">
               <span class="detail-label">Requested on</span>
               <span class="detail-value">{{ r.createdOn }}</span>
@@ -466,7 +466,7 @@ async function rate(r, stars) {
         </div>
 
         <div class="modal-body">
-          <div class="two-col">
+          <div class="one-col">
 
             <!-- left: form -->
             <div class="form-col">
@@ -502,9 +502,9 @@ async function rate(r, stars) {
                 <option v-for="c in categoryOptions" :key="c" :value="c">{{ categoryIcon(c) }} {{ c }}</option>
               </select>
 
-              <p class="duration-hint">
+              <!-- <p class="duration-hint">
                 ⏱ Estimated time for {{ formCategory }}: <strong>{{ estimatedDuration }}</strong>
-              </p>
+              </p> -->
 
               <div class="vendor-row">
                 <div class="vendor-select-wrap">
@@ -514,7 +514,7 @@ async function rate(r, stars) {
                     <option v-for="v in vendorsForCategory(formCategory)" :key="v.name" :value="v.name">{{ v.name }}</option>
                   </select>
                 </div>
-                <button class="btn-outline ai-suggest-btn" @click="autoAssignVendor">✨ Auto-assign</button>
+                <button class="btn-outline ai-suggest-btn" @click="autoAssignVendor">Find Matching Vendor</button>
               </div>
               <p v-if="aiNote" class="ai-note">{{ aiNote }}</p>
 
@@ -536,7 +536,7 @@ async function rate(r, stars) {
             </div>
 
             <!-- right: AI helper + resolution times -->
-            <div class="side-panel">
+            <!-- <div class="side-panel">
 
               <div class="ai-panel">
                 <div class="ai-panel-title">✦ How AI helps</div>
@@ -556,7 +556,7 @@ async function rate(r, stars) {
                 <p class="resolution-note">Updates automatically based on the category detected from your description.</p>
               </div>
 
-            </div>
+            </div> -->
 
           </div>
         </div>

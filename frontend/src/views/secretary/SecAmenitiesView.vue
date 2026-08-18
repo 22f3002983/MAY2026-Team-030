@@ -2,12 +2,14 @@
 import { ref, computed, onMounted } from 'vue'
 import api from '../../api/axios'
 
+
 // =============================================================================
 // Secretary Amenities Management — mirrors the resident AmenitiesView.vue's
 // data-layer conventions (same normalize functions, same backend contract),
 // plus secretary-only actions: amenity CRUD, maintenance toggle, and
 // approve/reject on pending bookings.
 // =============================================================================
+
 
 // ---------------------------------------------------------------------------
 // Data layer — normalize backend shape into what the templates expect
@@ -16,6 +18,7 @@ const amenitiesRaw = ref([])
 const bookingsRaw = ref([])       // every booking, across all residents
 const amenityBookingsCache = ref({}) // { [amenityId]: normalized bookings[] }
 const loading = ref(false)
+
 
 function normalizeAmenity(a) {
   return {
@@ -42,6 +45,7 @@ function normalizeAmenity(a) {
   }
 }
 
+
 function bookingFrontendStatus(b) {
   if (b.status === 'pending') return 'pending_approval'
   if (b.status === 'cancelled') return 'cancelled'
@@ -54,6 +58,7 @@ function bookingFrontendStatus(b) {
   }
   return b.status
 }
+
 
 function normalizeBooking(b) {
   return {
@@ -74,11 +79,14 @@ function normalizeBooking(b) {
   }
 }
 
+
 function attachAmenity(b) {
   return { ...b, amenity: amenitiesRaw.value.find((a) => a.id === b.amenity_id) }
 }
 
+
 const amenities = computed(() => amenitiesRaw.value)
+
 
 const pendingApprovals = computed(() =>
   bookingsRaw.value
@@ -86,6 +94,7 @@ const pendingApprovals = computed(() =>
     .map(attachAmenity)
     .sort((a, b) => new Date(a.created_at || a.start_date) - new Date(b.created_at || b.start_date))
 )
+
 
 async function fetchAmenities() {
   loading.value = true
@@ -97,15 +106,18 @@ async function fetchAmenities() {
   }
 }
 
+
 async function fetchAllBookings() {
   const { data } = await api.get('/amenities/bookings')
   bookingsRaw.value = data.bookings.map(normalizeBooking)
 }
 
+
 async function fetchAmenityBookings(amenityId) {
   const { data } = await api.get(`/amenities/${amenityId}/bookings`)
   amenityBookingsCache.value[amenityId] = data.bookings.map(normalizeBooking)
 }
+
 
 function bookingTimeframe(booking) {
   const today = new Date().toISOString().slice(0, 10)
@@ -115,11 +127,13 @@ function bookingTimeframe(booking) {
   return 'upcoming'
 }
 
+
 function allBookingsForAmenity(amenityId) {
   return (amenityBookingsCache.value[amenityId] || [])
     .map((b) => ({ ...b, timeframe: bookingTimeframe(b) }))
     .sort((a, b) => new Date(b.start_date) - new Date(a.start_date))
 }
+
 
 // ---------------------------------------------------------------------------
 // Static helpers
@@ -144,6 +158,7 @@ function calculatePrice(amenity, units) {
   if (!amenity.pricing?.rate) return 0
   return amenity.pricing.rate * Math.max(units, amenity.pricing.minUnits || 1)
 }
+
 
 // ---------------------------------------------------------------------------
 // Secretary — amenity CRUD
@@ -174,12 +189,14 @@ function toBackendPayload(form) {
   }
 }
 
+
 async function addAmenityApi(form) {
   const { data } = await api.post('/amenities', toBackendPayload(form))
   const amenity = normalizeAmenity(data.amenity)
   amenitiesRaw.value.push(amenity)
   return amenity
 }
+
 
 async function updateAmenityApi(id, form) {
   const { data } = await api.patch(`/amenities/${id}`, toBackendPayload(form))
@@ -188,6 +205,7 @@ async function updateAmenityApi(id, form) {
   if (i !== -1) amenitiesRaw.value[i] = amenity
   return amenity
 }
+
 
 async function deleteAmenityApi(id) {
   try {
@@ -199,6 +217,7 @@ async function deleteAmenityApi(id) {
   }
 }
 
+
 async function setStatusApi(id, status, statusUntil) {
   const { data } = await api.patch(`/amenities/${id}/status`, { status, status_until: statusUntil })
   const amenity = normalizeAmenity(data.amenity)
@@ -206,6 +225,7 @@ async function setStatusApi(id, status, statusUntil) {
   if (i !== -1) amenitiesRaw.value[i] = amenity
   return amenity
 }
+
 
 // ---------------------------------------------------------------------------
 // Secretary — approvals
@@ -216,11 +236,13 @@ async function approveBookingApi(bookingId) {
   if (i !== -1) bookingsRaw.value[i] = normalizeBooking(data.booking)
 }
 
+
 async function rejectBookingApi(bookingId, reason) {
   const { data } = await api.patch(`/amenities/bookings/${bookingId}/reject`, { reason })
   const i = bookingsRaw.value.findIndex((b) => b.id === bookingId)
   if (i !== -1) bookingsRaw.value[i] = normalizeBooking(data.booking)
 }
+
 
 // ---------------------------------------------------------------------------
 // Recommendation engine — same rule-based scoring as the resident page,
@@ -238,15 +260,19 @@ const EVENT_AFFINITY = {
 }
 const EVENT_TYPES = Object.keys(EVENT_AFFINITY)
 
+
 function recommend({ eventType, guests, budget, hours = 3 }) {
   const candidates = amenitiesRaw.value.filter((a) => isBookable(a) && a.status === 'available')
+
 
   const scored = candidates.map((a) => {
     let score = (EVENT_AFFINITY[eventType]?.[a.id] || 0) * 10
 
+
     if (a.capacity && guests) {
       score += a.capacity >= guests ? 15 - Math.min(15, (a.capacity - guests) * 0.3) : -20
     }
+
 
     const units = a.pricing.type === 'hourly' ? hours : 1
     const price = calculatePrice(a, units)
@@ -254,14 +280,17 @@ function recommend({ eventType, guests, budget, hours = 3 }) {
       score += price <= budget ? 10 - Math.min(10, ((budget - price) / budget) * 10) : -15
     }
 
+
     return { amenity: a, score, estimatedPrice: price }
   })
+
 
   return scored
     .filter((s) => s.score > -10)
     .sort((a, b) => b.score - a.score)
     .slice(0, 3)
 }
+
 
 // =============================================================================
 // PAGE STATE
@@ -274,21 +303,72 @@ function showToast(text) {
   toastTimer = setTimeout(() => (toastMsg.value = ''), 3200)
 }
 
+
 const exclusiveAmenities = computed(() => amenities.value.filter((a) => a.category === 'exclusive'))
 const publicAmenities = computed(() => amenities.value.filter((a) => a.category === 'public'))
 const infraAmenities = computed(() => amenities.value.filter((a) => a.category === 'unbookable'))
+
 
 async function handleApprove(booking) {
   await approveBookingApi(booking.id)
   showToast(`${booking.amenity?.name} booking approved`)
 }
 
-async function handleReject(booking) {
-  const reason = window.prompt(`Reason for rejecting this ${booking.amenity?.name} booking?`, '')
-  if (reason === null) return
-  await rejectBookingApi(booking.id, reason)
-  showToast(`${booking.amenity?.name} booking rejected`)
+
+// ---------------------------------------------------------------------------
+// Confirm/input modal — shared by Reject, Maintenance and Delete.
+// Native window.prompt()/window.confirm() are unreliable in real browsers
+// (popup blockers, "prevent additional dialogs", many mobile/webview
+// browsers silently return null with no error) — this replaces all three
+// with an in-page modal, consistent with the rest of the app's modals.
+// ---------------------------------------------------------------------------
+const showConfirmModal = ref(false)
+const confirmType = ref(null) // 'reject' | 'maintenance' | 'delete'
+const confirmTarget = ref(null)
+const confirmReason = ref('')
+const confirmDate = ref('')
+const confirmError = ref('')
+
+
+function openRejectModal(booking) {
+  confirmType.value = 'reject'
+  confirmTarget.value = booking
+  confirmReason.value = ''
+  confirmError.value = ''
+  showConfirmModal.value = true
 }
+
+
+function closeConfirmModal() {
+  showConfirmModal.value = false
+  confirmType.value = null
+  confirmTarget.value = null
+}
+
+
+async function submitConfirmModal() {
+  confirmError.value = ''
+  try {
+    if (confirmType.value === 'reject') {
+      await rejectBookingApi(confirmTarget.value.id, confirmReason.value.trim())
+      showToast(`${confirmTarget.value.amenity?.name} booking rejected`)
+    } else if (confirmType.value === 'maintenance') {
+      await setStatusApi(confirmTarget.value.id, 'maintenance', confirmDate.value || null)
+      showToast(`${confirmTarget.value.name} marked under maintenance`)
+    } else if (confirmType.value === 'delete') {
+      const result = await deleteAmenityApi(confirmTarget.value.id)
+      if (!result.ok) {
+        confirmError.value = result.reason
+        return
+      }
+      showToast(`${confirmTarget.value.name} deleted`)
+    }
+    closeConfirmModal()
+  } catch (e) {
+    confirmError.value = e?.response?.data?.error || 'Something went wrong.'
+  }
+}
+
 
 // ---------------------------------------------------------------------------
 // Recommendation panel state
@@ -300,6 +380,7 @@ const recBudget = ref(2000)
 const recHours = ref(3)
 const recResults = ref(null)
 
+
 function getRecommendation() {
   recResults.value = recommend({
     eventType: recEventType.value,
@@ -309,12 +390,14 @@ function getRecommendation() {
   })
 }
 
+
 // ---------------------------------------------------------------------------
 // Add/Edit amenity modal
 // ---------------------------------------------------------------------------
 const showFormModal = ref(false)
 const editingId = ref(null)
 const formError = ref('')
+
 
 const emptyForm = () => ({
   name: '', category: 'exclusive', icon: '⭐', location: '', description: '',
@@ -325,12 +408,14 @@ const emptyForm = () => ({
 })
 const form = ref(emptyForm())
 
+
 function openAddForm() {
   editingId.value = null
   form.value = emptyForm()
   formError.value = ''
   showFormModal.value = true
 }
+
 
 function openEditForm(amenity) {
   editingId.value = amenity.id
@@ -357,9 +442,11 @@ function openEditForm(amenity) {
   showFormModal.value = true
 }
 
+
 function closeFormModal() {
   showFormModal.value = false
 }
+
 
 async function submitForm() {
   formError.value = ''
@@ -381,27 +468,29 @@ async function submitForm() {
   }
 }
 
-async function handleDelete(amenity) {
-  if (!window.confirm(`Delete ${amenity.name}? This can't be undone.`)) return
-  const result = await deleteAmenityApi(amenity.id)
-  if (result.ok) {
-    showToast(`${amenity.name} deleted`)
-  } else {
-    showToast(result.reason)
-  }
+
+function handleDelete(amenity) {
+  confirmType.value = 'delete'
+  confirmTarget.value = amenity
+  confirmError.value = ''
+  showConfirmModal.value = true
 }
+
 
 async function handleToggleMaintenance(amenity) {
   if (amenity.status === 'maintenance') {
+    // clearing needs no input — go straight through, same as before
     await setStatusApi(amenity.id, 'available', null)
     showToast(`${amenity.name} marked available`)
   } else {
-    const until = window.prompt(`Under maintenance until (YYYY-MM-DD), or leave blank:`, '')
-    if (until === null) return
-    await setStatusApi(amenity.id, 'maintenance', until || null)
-    showToast(`${amenity.name} marked under maintenance`)
+    confirmType.value = 'maintenance'
+    confirmTarget.value = amenity
+    confirmDate.value = ''
+    confirmError.value = ''
+    showConfirmModal.value = true
   }
 }
+
 
 // ---------------------------------------------------------------------------
 // Booking history modal (click an amenity card)
@@ -409,20 +498,24 @@ async function handleToggleMaintenance(amenity) {
 const showHistoryModal = ref(false)
 const historyAmenity = ref(null)
 
+
 async function openHistory(amenity) {
   historyAmenity.value = amenity
   showHistoryModal.value = true
   await fetchAmenityBookings(amenity.id)
 }
 
+
 function closeHistory() {
   showHistoryModal.value = false
   historyAmenity.value = null
 }
 
+
 const historyBookings = computed(() =>
   historyAmenity.value ? allBookingsForAmenity(historyAmenity.value.id) : []
 )
+
 
 // =============================================================================
 onMounted(async () => {
@@ -430,6 +523,7 @@ onMounted(async () => {
   await fetchAllBookings()
 })
 </script>
+
 
 <template>
   <div class="sec-amenities">
@@ -441,7 +535,9 @@ onMounted(async () => {
       <button class="btn-add" @click="openAddForm">+ Add Amenity</button>
     </div>
 
+
     <div v-if="toastMsg" class="toast-banner">✓ {{ toastMsg }}</div>
+
 
     <!-- Pending approvals -->
     <div v-if="pendingApprovals.length" class="approvals-panel">
@@ -460,11 +556,12 @@ onMounted(async () => {
           </div>
           <div class="approval-actions">
             <button class="approve-btn" @click="handleApprove(b)">Approve</button>
-            <button class="reject-btn" @click="handleReject(b)">Reject</button>
+            <button class="reject-btn" @click="openRejectModal(b)">Reject</button>
           </div>
         </div>
       </div>
     </div>
+
 
     <!-- exclusive -->
     <div class="section-title" style="margin-top: 24px">Exclusive Booking</div>
@@ -496,6 +593,7 @@ onMounted(async () => {
       </div>
     </div>
 
+
     <!-- public -->
     <div class="section-title" style="margin-top: 32px">Shared Facilities</div>
     <div class="amenity-grid">
@@ -525,6 +623,7 @@ onMounted(async () => {
         </div>
       </div>
     </div>
+
 
     <!-- infrastructure -->
     <div class="section-title" style="margin-top: 32px">Infrastructure</div>
@@ -556,6 +655,7 @@ onMounted(async () => {
       </div>
     </div>
 
+
     <!-- ============ ADD / EDIT MODAL ============ -->
     <div v-if="showFormModal" class="modal-overlay" @click.self="closeFormModal">
       <div class="modal-sheet form-modal">
@@ -563,8 +663,10 @@ onMounted(async () => {
         <div class="modal-content">
           <h3>{{ editingId ? 'Edit Amenity' : 'Add New Amenity' }}</h3>
 
+
           <label class="form-label">Name *</label>
           <input v-model="form.name" type="text" class="n-input" placeholder="e.g. Rooftop Lounge" />
+
 
           <div class="form-row">
             <div>
@@ -581,11 +683,14 @@ onMounted(async () => {
             </div>
           </div>
 
+
           <label class="form-label">Location</label>
           <input v-model="form.location" type="text" class="n-input" placeholder="e.g. Clubhouse · Ground Floor" />
 
+
           <label class="form-label">Description</label>
           <textarea v-model="form.description" class="n-input n-textarea" rows="2"></textarea>
+
 
           <div class="form-row">
             <div>
@@ -598,11 +703,13 @@ onMounted(async () => {
             </div>
           </div>
 
+
           <div class="form-checks">
             <label class="check-label"><input type="checkbox" v-model="form.air_conditioned" /> Air conditioned</label>
             <label class="check-label"><input type="checkbox" v-model="form.decoratable" /> Decoration allowed</label>
             <label class="check-label"><input type="checkbox" v-model="form.special_booking" /> Special booking (shared facility, exceptionally bookable)</label>
           </div>
+
 
           <label class="form-label">Booking type</label>
           <select v-model="form.booking_type" class="n-input">
@@ -610,6 +717,7 @@ onMounted(async () => {
             <option value="automatic">Automatic</option>
             <option value="approval_required">Needs approval</option>
           </select>
+
 
           <template v-if="form.booking_type">
             <div class="form-row three">
@@ -634,6 +742,7 @@ onMounted(async () => {
             <input v-if="form.pricingType" v-model="form.unitLabel" type="text" class="n-input" placeholder="e.g. hour, day, night" />
           </template>
 
+
           <label class="form-label">Status</label>
           <select v-model="form.status" class="n-input">
             <option value="available">Available</option>
@@ -645,7 +754,9 @@ onMounted(async () => {
             <input v-model="form.status_until" type="date" class="n-input" />
           </template>
 
+
           <p v-if="formError" class="error-msg">{{ formError }}</p>
+
 
           <div class="modal-actions">
             <button class="btn-secondary" @click="closeFormModal">Cancel</button>
@@ -654,6 +765,51 @@ onMounted(async () => {
         </div>
       </div>
     </div>
+
+
+    <!-- ============ CONFIRM MODAL (reject / maintenance / delete) ============ -->
+    <div v-if="showConfirmModal" class="modal-overlay" @click.self="closeConfirmModal">
+      <div class="modal-sheet form-modal">
+        <button class="modal-close-btn" @click="closeConfirmModal">✕</button>
+        <div class="modal-content">
+          <template v-if="confirmType === 'reject'">
+            <h3>Reject Booking</h3>
+            <p class="modal-location">{{ confirmTarget?.amenity?.name }} — {{ confirmTarget?.user_name }}</p>
+            <label class="form-label">Reason (optional)</label>
+            <textarea v-model="confirmReason" class="n-input n-textarea" rows="3" placeholder="Why is this booking being rejected?"></textarea>
+          </template>
+
+
+          <template v-else-if="confirmType === 'maintenance'">
+            <h3>Mark Under Maintenance</h3>
+            <p class="modal-location">{{ confirmTarget?.name }}</p>
+            <label class="form-label">Maintenance until (optional)</label>
+            <input v-model="confirmDate" type="date" class="n-input" />
+          </template>
+
+
+          <template v-else-if="confirmType === 'delete'">
+            <h3>Delete Amenity</h3>
+            <p class="modal-location">Delete {{ confirmTarget?.name }}? This can't be undone.</p>
+          </template>
+
+
+          <p v-if="confirmError" class="error-msg">{{ confirmError }}</p>
+
+
+          <div class="modal-actions">
+            <button class="btn-secondary" @click="closeConfirmModal">Cancel</button>
+            <button
+              :class="['btn-primary', { 'btn-danger': confirmType === 'delete' }]"
+              @click="submitConfirmModal"
+            >
+              {{ confirmType === 'reject' ? 'Reject Booking' : confirmType === 'maintenance' ? 'Mark Maintenance' : 'Delete' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
 
     <!-- ============ BOOKING HISTORY MODAL ============ -->
     <div v-if="showHistoryModal && historyAmenity" class="modal-overlay" @click.self="closeHistory">
@@ -665,6 +821,7 @@ onMounted(async () => {
         <div class="modal-content">
           <h3>{{ historyAmenity.name }}</h3>
           <p class="modal-location">📍 {{ historyAmenity.location }}</p>
+
 
           <div class="section-label">Booking History</div>
           <div v-if="historyBookings.length === 0" class="empty-inline">No bookings yet.</div>
@@ -685,16 +842,20 @@ onMounted(async () => {
       </div>
     </div>
 
+
     <!-- toast -->
   </div>
 </template>
 
+
 <style scoped>
 .sec-amenities { max-width: var(--content-max-width); }
+
 
 .page-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 24px; }
 .page-header h2 { font-size: var(--font-size-3xl); font-weight: 800; letter-spacing: -0.4px; }
 .page-sub { font-size: var(--font-size-sm); color: var(--color-text-muted); margin-top: 4px; }
+
 
 .btn-add {
   height: 42px; padding: 0 20px; border-radius: var(--radius-md); background: var(--c-900); color: #fff;
@@ -702,13 +863,16 @@ onMounted(async () => {
 }
 .btn-add:hover { background: var(--c-800); }
 
+
 .toast-banner {
   background: var(--color-success-bg); color: var(--color-success-text);
   border: 1px solid var(--color-success); border-radius: var(--radius-md);
   padding: 12px 16px; font-size: var(--font-size-md); font-weight: 600; margin-bottom: 20px;
 }
 
+
 .section-title { font-size: var(--font-size-xl); font-weight: 700; color: var(--color-text-primary); margin-bottom: 12px; }
+
 
 /* ---------- Pending approvals ---------- */
 .approvals-panel {
@@ -724,6 +888,7 @@ onMounted(async () => {
 .approval-actions { display: flex; gap: 6px; }
 .approve-btn { padding: 6px 14px; border-radius: var(--radius-md); background: var(--c-900); color: #fff; font-size: var(--font-size-xs); font-weight: 700; white-space: nowrap; }
 .reject-btn { padding: 6px 14px; border-radius: var(--radius-md); background: transparent; border: 1px solid var(--color-danger); color: var(--color-danger); font-size: var(--font-size-xs); font-weight: 700; white-space: nowrap; }
+
 
 /* ---------- Recommendation panel ---------- */
 .rec-panel {
@@ -752,14 +917,17 @@ onMounted(async () => {
 .rec-best-tag { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: var(--radius-pill); background: var(--color-success-bg); color: var(--color-success-text); }
 .rec-result-meta { font-size: var(--font-size-xs); color: var(--color-text-muted); margin-top: 2px; }
 
+
 /* ---------- Grid & cards ---------- */
 .amenity-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; margin-bottom: 8px; }
 .amenity-card { background: var(--color-surface); border-radius: var(--radius-xl); border: 1px solid var(--color-border); overflow: hidden; box-shadow: var(--shadow-sm); transition: box-shadow var(--transition-fast); cursor: pointer; }
 .amenity-card:hover { box-shadow: var(--shadow-md); }
 
+
 .card-header-area { background: linear-gradient(155deg, var(--c-900) 0%, var(--c-500) 100%); height: 100px; display: flex; align-items: center; justify-content: center; position: relative; padding: 16px; }
 .card-header-area.infra { background: linear-gradient(155deg, #2d3748 0%, #4a5568 100%); }
 .card-icon { font-size: 32px; filter: grayscale(1) brightness(5); }
+
 
 .status-tag { position: absolute; top: 12px; right: 12px; display: flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: var(--radius-pill); font-size: var(--font-size-xs); font-weight: 700; background: rgba(255,255,255,0.92); }
 .status-tag.available { color: var(--color-success-text); }
@@ -772,19 +940,23 @@ onMounted(async () => {
 .status-tag.maintenance .status-dot { background: var(--color-warning); }
 .status-tag.closed .status-dot { background: var(--badge-closed-text); }
 
+
 .card-body-area { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
 .amenity-name { display: block; font-size: var(--font-size-md); font-weight: 700; color: var(--color-text-primary); margin-bottom: 4px; }
 .amenity-desc { font-size: var(--font-size-xs); color: var(--color-text-secondary); line-height: 1.5; }
 .card-body-bottom { display: flex; align-items: center; }
 
+
 .exclusive-tag { padding: 4px 12px; border-radius: var(--radius-pill); background: var(--color-warning-bg); color: var(--color-warning-text); font-size: var(--font-size-xs); font-weight: 700; }
 .public-tag { padding: 4px 12px; border-radius: var(--radius-pill); background: var(--color-success-bg); color: var(--color-success-text); font-size: var(--font-size-xs); font-weight: 700; }
 .info-tag { padding: 4px 12px; border-radius: var(--radius-pill); background: var(--badge-closed-bg); color: var(--badge-closed-text); font-size: var(--font-size-xs); font-weight: 700; }
+
 
 .card-actions { display: flex; gap: 6px; padding-top: 8px; border-top: 1px solid var(--color-border); }
 .action-btn { flex: 1; padding: 6px; border-radius: var(--radius-sm); border: 1.5px solid var(--color-border-soft); background: var(--color-surface); font-size: 11px; font-weight: 600; color: var(--color-text-secondary); }
 .action-btn:hover { border-color: var(--c-600); color: var(--c-800); }
 .action-btn.danger:hover { border-color: var(--color-danger); color: var(--color-danger); }
+
 
 /* ---------- Modal ---------- */
 .modal-overlay { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.5); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 20px; }
@@ -812,6 +984,8 @@ onMounted(async () => {
 .btn-primary { flex: 1; height: 44px; border-radius: var(--radius-md); background: var(--c-900); color: #fff; font-size: var(--font-size-md); font-weight: 700; }
 .btn-primary:hover { background: var(--c-800); }
 .btn-secondary { flex: 1; height: 44px; border-radius: var(--radius-md); border: 1.5px solid var(--color-border-soft); background: var(--color-surface); color: var(--color-text-secondary); font-size: var(--font-size-md); font-weight: 600; }
+.btn-danger { background: var(--color-danger); }
+.btn-danger:hover { background: var(--color-danger-text); }
 
 .section-label { font-size: var(--font-size-xs); font-weight: 700; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.4px; margin-top: 16px; margin-bottom: 10px; }
 .empty-inline { text-align: center; padding: 20px 10px; font-size: var(--font-size-sm); color: var(--color-text-muted); }

@@ -156,6 +156,7 @@ def secretary_summary():
         'unassigned':        unassigned,
         'recent_complaints': [{
             'id':          i.id,
+            'title':       i.title,
             'description': i.description,
             'category':    i.category,
             'status':      i.status,

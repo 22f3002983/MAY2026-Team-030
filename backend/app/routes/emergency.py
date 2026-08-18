@@ -2,12 +2,29 @@ from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user
 from app.extensions import db
 from app.models.emergency import EmergencyAlert
+from app.routes.notifications import create_notification
 import uuid
 from datetime import datetime, timezone
 from sqlalchemy import or_
 
 
 emergency_bp = Blueprint('emergency', __name__)
+
+
+def _alert_audience(alert_type):
+    """user_ids that should hear about this alert in-app: secretary + security
+    always, residents too if it's Public. Mirrors the telegram broadcast list
+    in create_alert, but keyed by user_id (not telegram_chat_id) since every
+    user should get the in-app notification regardless of telegram linkage."""
+    from app.models.resident import Resident
+    from app.models.secretary import Secretary
+    from app.models.security import Security
+
+    user_ids = [s.user_id for s in Secretary.query.all()]
+    user_ids += [s.user_id for s in Security.query.all()]
+    if alert_type == 'Public':
+        user_ids += [r.user_id for r in Resident.query.all()]
+    return user_ids
 
 
 # ── helper ────────────────────────────────────────────────────
@@ -132,6 +149,13 @@ def create_alert():
 
     send_telegram_message_bulk(chat_ids, telegram_message)
 
+    in_app_message = f'🚨 {alert_type} emergency alert: {message}'
+    for user_id in _alert_audience(alert_type):
+        # don't notify the person who just raised it
+        if user_id == current_user.id:
+            continue
+        create_notification(user_id=user_id, message=in_app_message, type='emergency_alert')
+    db.session.commit()
 
     return jsonify({
         'message': 'Emergency alert sent',
@@ -151,6 +175,12 @@ def resolve_alert(alert_id):
     alert.status      = 'resolved'
     alert.resolved_at = datetime.now(timezone.utc)
     alert.resolved_by = current_user.id
+
+    resolved_message = f'✅ {alert.type} emergency alert resolved: {alert.message}'
+    for user_id in _alert_audience(alert.type):
+        if user_id == current_user.id:
+            continue
+        create_notification(user_id=user_id, message=resolved_message, type='emergency_alert')
 
     db.session.commit()
 

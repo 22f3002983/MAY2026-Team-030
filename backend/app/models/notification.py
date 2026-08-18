@@ -9,7 +9,8 @@ class Notification(db.Model):
     message    = db.Column(db.String(300), nullable=False)
     type       = db.Column(db.Enum(
         'booking_approved', 'booking_rejected', 'complaint_updated',
-        'dues_reminder', 'document_ready', 'general',
+        'dues_reminder', 'document_ready', 'emergency_alert',
+        'notice_posted', 'general',
         name='notification_types'
     ), default='general')
     is_read    = db.Column(db.Boolean, default=False)

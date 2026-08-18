@@ -3,11 +3,27 @@ from flask_login import login_required, current_user
 from sqlalchemy import or_
 from app.extensions import db
 from app.models.notice import Notice
+from app.models.resident import Resident
+from app.routes.notifications import create_notification
 import uuid
 from datetime import datetime, date
 from app.models.flat import Flat
 
 notices_bp = Blueprint('notices', __name__)
+
+
+def notify_residents_of_notice(notice):
+    """relevance is either 'all' or a specific tower/block — mirrors the
+    same filtering GET /api/notices already does for a resident's dropdown,
+    so only residents whose block matches (or a blanket notice) get pinged."""
+    residents = Resident.query.filter(Resident.user_id.isnot(None)).all()
+    for resident in residents:
+        if notice.relevance == 'all' or (resident.flat and resident.flat.tower == notice.relevance):
+            create_notification(
+                user_id=resident.user_id,
+                message=f'New notice: {notice.title}',
+                type='notice_posted',
+            )
 
 VALID_TAGS = ('General', 'Maintenance', 'Security', 'Event', 'Urgent')
 VALID_PRIORITIES = ('normal', 'urgent')
@@ -142,6 +158,10 @@ def create_notice():
     )
 
     db.session.add(notice)
+    db.session.flush()  # notice.id needed before we start attaching notifications
+
+    notify_residents_of_notice(notice)
+
     db.session.commit()
 
     return jsonify({

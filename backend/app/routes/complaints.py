@@ -122,9 +122,11 @@ def find_matching_issue(title, category):
     return None
 
 
-def notify_reporters(issue, message, notif_type):
+def notify_reporters(issue, message, notif_type, exclude_user_id=None):
+    """Notifies everyone following this issue (i.e. everyone who reported it),
+    optionally skipping the user who just triggered the change themselves."""
     for report in issue.reports:
-        if report.resident and report.resident.user_id:
+        if report.resident and report.resident.user_id and report.resident.user_id != exclude_user_id:
             create_notification(user_id=report.resident.user_id, message=message, type=notif_type)
 
 
@@ -505,6 +507,15 @@ def update_status(id_):
     issue.status = new_status
     if new_status == 'resolved':
         issue.resolved_at = datetime.utcnow()
+
+    # let everyone following this issue know it moved, minus whoever just
+    # triggered this update themselves (no point notifying yourself)
+    notify_reporters(
+        issue,
+        message=f'Your complaint ({issue.title}) is now {new_status.replace("_", " ")}',
+        notif_type='complaint_updated',
+        exclude_user_id=current_user.id if current_user.role == 'resident' else None,
+    )
 
     db.session.commit()
 

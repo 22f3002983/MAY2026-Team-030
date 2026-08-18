@@ -33,8 +33,18 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function restoreSession() {
-    const saved = localStorage.getItem('niwaas_user')
-    if (saved) user.value = JSON.parse(saved)
+    // localStorage only tells us who was logged in last time, not whether
+    // the server-side session is still valid (it can expire, get wiped by
+    // session_protection='strong', or be cleared server-side). Ask the
+    // backend so isLoggedIn reflects the real session, not stale cache.
+    try {
+      const response = await api.get('/auth/me')
+      user.value = response.data.user
+      localStorage.setItem('niwaas_user', JSON.stringify(response.data.user))
+    } catch (err) {
+      user.value = null
+      localStorage.removeItem('niwaas_user')
+    }
   }
 
   function setUser(updatedUser) {

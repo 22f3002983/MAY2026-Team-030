@@ -185,14 +185,19 @@ def security_summary():
         db.or_(
             Visitor.expected_date == today,
             db.and_(Visitor.check_in_time >= day_start, Visitor.check_in_time <= day_end),
+            # same reasoning as /visitors/today — walk-ins don't carry a
+            # meaningful expected_date, "today" means created today
+            db.and_(Visitor.visit_type == 'walk_in', Visitor.created_at >= day_start, Visitor.created_at <= day_end),
         )
     ).all()
 
     visitors_inside   = Visitor.query.filter_by(status='checked_in').count()
     awaiting_approval = sum(1 for v in todays_visitors if v.status == 'awaiting_approval')
-    pre_registered    = sum(
+    # matches the "Upcoming" list on the dashboard exactly: approved
+    # walk-ins ready to check in today, not revoked, not timed out.
+    walkins_today = sum(
         1 for v in todays_visitors
-        if v.status == 'pre_registered' and not v.revoked and not _is_timed_out(v)
+        if v.visit_type == 'walk_in' and v.status == 'pre_registered' and not v.revoked and not _is_timed_out(v)
     )
     # matches "delivery"/"deliveries" in the free-text reason field —
     # there is no dedicated visitor category for this yet
@@ -204,6 +209,6 @@ def security_summary():
     return jsonify({
         'visitors_inside':     visitors_inside,
         'awaiting_approval':   awaiting_approval,
-        'pre_registered':      pre_registered,
+        'walkins_today':       walkins_today,
         'deliveries_today':    deliveries_today,
     }), 200

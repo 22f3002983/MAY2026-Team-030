@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import api from '../../api/axios'
 import { digitsOnly, toStoredPhone, extractDigits } from '../../utils/phone'
 
@@ -46,8 +46,29 @@ const listTabs = [
   { value: 'active',      label: 'Active Passes' },
 ]
 
+// `is_expired` in the API response is only as fresh as the moment it was
+// fetched — with no periodic refresh, a pass that expires while this page
+// is sitting open kept showing as active until some action forced a
+// refetch. `now` ticks on its own so expiry is re-evaluated live, without
+// waiting on the network; `visitorsPollTimer` also keeps other
+// server-driven fields (status changes made by security, etc.) reasonably
+// fresh, the same way NotificationBell does.
+const now = ref(Date.now())
+let clockTimer = null
+let visitorsPollTimer = null
+
+const VISITORS_POLL_INTERVAL_MS = 30000
+const CLOCK_TICK_MS = 15000
+
 onMounted(async () => {
   await fetchVisitors()
+  clockTimer = setInterval(() => { now.value = Date.now() }, CLOCK_TICK_MS)
+  visitorsPollTimer = setInterval(() => { fetchVisitors() }, VISITORS_POLL_INTERVAL_MS)
+})
+
+onUnmounted(() => {
+  if (clockTimer) clearInterval(clockTimer)
+  if (visitorsPollTimer) clearInterval(visitorsPollTimer)
 })
 
 async function fetchVisitors() {
@@ -60,6 +81,16 @@ async function fetchVisitors() {
   } finally {
     visitorsLoading.value = false
   }
+}
+
+// Source of truth for "is this pass expired right now": the server's
+// is_expired flag OR expires_at having passed as of our live clock —
+// whichever says expired wins. This means a pass flips to expired the
+// moment its time is up, not just on the next fetch.
+function isExpiredNow(v) {
+  if (v.is_expired) return true
+  if (!v.expires_at) return false
+  return now.value >= new Date(v.expires_at).getTime()
 }
 
 // ── status helpers, built only from real fields ──────────────
@@ -86,7 +117,9 @@ const STATUS_CLASSES = {
 // stop the pass from working, but only one was a deliberate cancel.
 function displayStatus(v) {
   if (v.revoked) return 'revoked'
-  if (v.status === 'pre_registered' && v.is_expired) return 'expired'
+  // pre_registered or checked_out can both still time out; checked_in
+  // can't (the visitor is already inside, the clock no longer matters).
+  if ((v.status === 'pre_registered' || v.status === 'checked_out') && isExpiredNow(v)) return 'expired'
   return v.status
 }
 function statusLabel(v) { return STATUS_LABELS[displayStatus(v)] || v.status }
@@ -110,7 +143,7 @@ function formatDateTime(dtStr) {
 function expiryBadgeText(v) {
   if (v.revoked)  return `Revoked ${formatDateTime(v.revoked_at)}`
   if (!v.expires_at) return null
-  if (v.is_expired) return `Expired ${formatDateTime(v.expires_at)}`
+  if (isExpiredNow(v)) return `Expired ${formatDateTime(v.expires_at)}`
   return `Expires ${formatDateTime(v.expires_at)}`
 }
 
@@ -130,7 +163,7 @@ function visitorMeta(v) {
 // ── tabs ───────────────────────────────────────────────────────
 
 const upcoming = computed(() =>
-  visitors.value.filter(v => v.status === 'pre_registered' && !v.is_expired)
+  visitors.value.filter(v => v.status === 'pre_registered' && !v.revoked && !isExpiredNow(v))
 )
 const checkedIn = computed(() => visitors.value.filter(v => v.status === 'checked_in'))
 
@@ -161,10 +194,13 @@ async function denyGateRequest(v) {
   }
 }
 
-// "Active" = still usable right now: not expired, and not in a terminal
-// rejected/checked_out state.
+// A pass stays "active" through its whole lifecycle — pre_registered,
+// checked_in, even checked_out — as long as it hasn't actually timed out
+// or been revoked. Checking out doesn't end a pass early; only expires_at
+// passing or an explicit revoke does. That's what makes re-entry on the
+// same pass possible until it truly expires.
 const activePasses = computed(() =>
-  visitors.value.filter(v => !v.revoked && !v.is_expired && ['pre_registered', 'checked_in'].includes(v.status))
+  visitors.value.filter(v => !v.revoked && !isExpiredNow(v) && ['pre_registered', 'checked_in', 'checked_out'].includes(v.status))
 )
 
 const visibleVisitors = computed(() => {
@@ -277,6 +313,13 @@ const activityLog = computed(() => {
     if (v.check_out_time) events.push({ type: 'checked_out', visitor: v.name, at: v.check_out_time })
     if (v.status === 'rejected') events.push({ type: 'rejected', visitor: v.name, at: v.check_in_time || v.created_at })
     if (v.revoked) events.push({ type: 'revoked', visitor: v.name, at: v.revoked_at })
+    // same condition displayStatus() uses to label something "Expired" —
+    // a pre_registered or checked_out pass that timed out and was never
+    // revoked. Timed out at exactly expires_at, so that's the event's
+    // timestamp.
+    if ((v.status === 'pre_registered' || v.status === 'checked_out') && !v.revoked && isExpiredNow(v)) {
+      events.push({ type: 'expired', visitor: v.name, at: v.expires_at })
+    }
   })
   return events.filter(e => e.at).sort((a, b) => new Date(b.at) - new Date(a.at))
 })
@@ -301,8 +344,9 @@ const EVENT_TEXT = {
   checked_out:  e => `${e.visitor} checked out`,
   rejected:     e => `${e.visitor}'s pass rejected`,
   revoked:      e => `${e.visitor}'s pass revoked`,
+  expired:      e => `${e.visitor}'s pass expired`,
 }
-const EVENT_DOT_CLASS = { checked_in: 'dot-in', checked_out: 'dot-out', rejected: 'dot-revoked', revoked: 'dot-revoked' }
+const EVENT_DOT_CLASS = { checked_in: 'dot-in', checked_out: 'dot-out', rejected: 'dot-revoked', revoked: 'dot-revoked', expired: 'dot-revoked' }
 function eventText(e) { return EVENT_TEXT[e.type](e) }
 function eventDotClass(type) { return EVENT_DOT_CLASS[type] || 'dot-created' }
 </script>
@@ -435,7 +479,7 @@ function eventDotClass(type) { return EVENT_DOT_CLASS[type] || 'dot-created' }
               <span class="pass-code">{{ v.pass_code }}</span>
               <div class="action-row">
                 <button
-                  v-if="!v.revoked && !v.is_expired && v.status === 'pre_registered'"
+                  v-if="!v.revoked && !isExpiredNow(v) && ['pre_registered', 'checked_in', 'checked_out'].includes(v.status)"
                   class="revoke-btn"
                   @click="revokeCode(v.id)"
                 >

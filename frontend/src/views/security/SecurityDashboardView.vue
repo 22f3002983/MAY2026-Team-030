@@ -66,7 +66,7 @@ async function refreshAll() {
 const summaryStats = ref({
   visitorsInside:   '—',
   awaitingApproval: '—',
-  preRegistered:    '—',
+  walkinsToday:     '—',
   deliveriesToday:  '—',
 })
 
@@ -76,7 +76,7 @@ async function fetchSummary() {
     summaryStats.value = {
       visitorsInside:   res.data.visitors_inside,
       awaitingApproval: res.data.awaiting_approval,
-      preRegistered:    res.data.pre_registered,
+      walkinsToday:     res.data.walkins_today,
       deliveriesToday:  res.data.deliveries_today,
     }
   } catch (err) {
@@ -105,10 +105,25 @@ onUnmounted(() => {
 
 // ===== computed views =====
 
+// "Approvals" = still waiting on the resident's decision. Approved
+// walk-ins ready for check-in now live in their own "Upcoming" section
+// below, not mixed in here.
 const activeApprovals = computed(() =>
+  todaysVisitors.value.filter(v => v.status === 'awaiting_approval')
+)
+
+// Walk-ins only — approved and ready to check in today, not expired.
+// Pre-registered (non-walk-in) visitors don't belong here.
+// "Today" for a walk-in means created today (see /visitors/today), since
+// walk-ins don't carry a meaningful expected_date of their own.
+// NOTE: no `!v.revoked` check here — visitor_to_security_dict folds
+// revocation into is_expired and doesn't expose a separate `revoked`
+// field on this page, so that check was always a no-op.
+const upcomingWalkins = computed(() =>
   todaysVisitors.value.filter(v =>
-    v.status === 'awaiting_approval' ||
-    (v.visit_type === 'walk_in' && v.status === 'pre_registered' && !v.check_in_time && !v.is_expired)
+    v.visit_type === 'walk_in' &&
+    v.status === 'pre_registered' &&
+    !v.is_expired
   )
 )
 
@@ -125,12 +140,14 @@ const todaysLog = computed(() =>
 const metrics = computed(() => [
   { label: 'Visitors Inside',   value: String(summaryStats.value.visitorsInside),   sub: 'live count',     icon: '✓',  tint: '#4E8EA2' },
   { label: 'Awaiting Approval', value: String(summaryStats.value.awaitingApproval), sub: 'at the gate',    icon: '🛡', tint: '#E0A030' },
-  { label: 'Pre-registered',    value: String(summaryStats.value.preRegistered),    sub: 'expected today', icon: '📅', tint: '#78BDE9' },
+  { label: 'Walk-ins',          value: String(summaryStats.value.walkinsToday),     sub: 'ready today',    icon: '🚶', tint: '#78BDE9' },
   { label: 'Deliveries',        value: String(summaryStats.value.deliveriesToday),  sub: 'today',          icon: '📦', tint: '#49769F' },
 ])
 
+// NOTE: the pre_registered && is_expired branch was dropped — this
+// function is only ever called on todaysLog rows, which are pre-filtered
+// to checked_in/checked_out/rejected, so pre_registered never reaches it.
 function statusLabel(v) {
-  if (v.status === 'pre_registered' && v.is_expired && !v.check_in_time) return 'Expired'
   const map = {
     awaiting_approval: 'Waiting for resident',
     pre_registered:    'Awaiting check-in',
@@ -153,17 +170,29 @@ async function verify() {
 
   try {
     const res = await api.patch('/visitors/verify', { pass_code: code })
-    verifyResult.value = { outcome: 'valid', visitor: res.data.visitor }
+    const visitor = res.data.visitor
+    // Backend's verify endpoint succeeds for checked_in visitors too
+    // (multi-entry passes don't fail on status), so we can't rely on
+    // outcome:'valid' alone — check status ourselves before showing
+    // the generic "Valid Pass" / Check In screen.
+    if (visitor.status === 'checked_in') {
+      verifyResult.value = { outcome: 'already_in', visitor }
+    } else {
+      verifyResult.value = { outcome: 'valid', visitor }
+    }
   } catch (err) {
     const allKnown = [...todaysVisitors.value, ...insideVisitors.value]
     const match = allKnown.find(v => v.pass_code === code)
 
+    // NOTE: the old 'checked_out' -> 'already_used' branch was removed.
+    // _is_usable() on the backend doesn't fail on status alone, so a
+    // checked_out pass never lands here by itself — this branch only
+    // ever fired when the pass was ALSO expired/revoked, and because it
+    // was checked first it masked the real reason (expired) behind a
+    // misleading "single-use" message. is_expired is now the only
+    // failure reason we report here.
     if (!match) {
       verifyResult.value = { outcome: 'not_found' }
-    } else if (match.status === 'checked_in') {
-      verifyResult.value = { outcome: 'already_in', visitor: match }
-    } else if (match.status === 'checked_out') {
-      verifyResult.value = { outcome: 'already_used', visitor: match }
     } else if (match.is_expired) {
       verifyResult.value = { outcome: 'expired', visitor: match }
     } else {
@@ -339,13 +368,6 @@ async function sendForApproval() {
           </div>
         </template>
 
-        <template v-else-if="verifyResult.outcome === 'already_used'">
-          <div class="verify-modal-icon error">✕</div>
-          <h3 class="verify-modal-title">Pass Already Used</h3>
-          <p class="verify-modal-sub">{{ verifyResult.visitor.name }} already checked out at {{ formatTime(verifyResult.visitor.check_out_time) }}. This code is single-use — ask the resident for a new one.</p>
-          <button class="verify-modal-close" @click="closeVerifyModal">Close</button>
-        </template>
-
         <template v-else>
           <div class="verify-modal-icon success">✓</div>
           <h3 class="verify-modal-title">Valid Pass</h3>
@@ -464,17 +486,35 @@ async function sendForApproval() {
           <span v-if="visitor.pass_code" class="visitor-code">{{ visitor.pass_code }}</span>
           <span class="visitor-time">{{ formatTime(visitor.created_at) }}</span>
         </div>
-        <span :class="['queue-badge', visitor.status === 'awaiting_approval' ? 'waiting' : 'checked_in']">
-          {{ visitor.status === 'awaiting_approval' ? 'Waiting for resident' : 'Approved — check in' }}
-        </span>
-
-        <!-- resident already approved (status = pre_registered): security checks in -->
-        <div v-if="visitor.status === 'pre_registered'" class="queue-actions">
-          <button class="approve-btn" @click="checkIn(visitor)" title="Check in">✓</button>
-        </div>
-        <!-- still pending — nothing for security to do but wait -->
-        <div v-else class="queue-actions">
+        <span class="queue-badge waiting">Waiting for resident</span>
+        <div class="queue-actions">
           <span class="visitor-meta">Waiting on resident's app</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- upcoming: approved walk-ins, ready to check in today. Whole card
+         is omitted (not even an empty state) when there's nothing here. -->
+    <div v-if="upcomingWalkins.length > 0" class="queue-card">
+      <div class="queue-header">
+        <span class="queue-title">Upcoming</span>
+        <span class="waiting-badge">{{ upcomingWalkins.length }} walk-in{{ upcomingWalkins.length === 1 ? '' : 's' }}</span>
+      </div>
+
+      <div v-for="visitor in upcomingWalkins" :key="visitor.id" class="queue-row">
+        <div class="visitor-avatar">{{ visitor.name.charAt(0) }}</div>
+        <div class="visitor-info">
+          <span class="visitor-name">{{ visitor.name }}</span>
+          <span class="visitor-meta">{{ visitor.reason || 'Walk-in' }}</span>
+        </div>
+        <div class="visitor-code-block">
+          <span v-if="visitor.pass_code" class="visitor-code">{{ visitor.pass_code }}</span>
+          <span class="visitor-time">Expires {{ formatTime(visitor.expires_at) }}</span>
+        </div>
+        <span class="queue-badge checked_in">Ready to check in</span>
+        <div class="queue-actions">
+          <button class="approve-btn" @click="checkIn(visitor)" title="Check in">✓</button>
+          <button class="reject-btn" @click="rejectAtGate(visitor)" title="Reject">✕</button>
         </div>
       </div>
     </div>

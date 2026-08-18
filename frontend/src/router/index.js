@@ -171,9 +171,12 @@ const router = createRouter({
 });
 
 // this runs before every route change
-router.beforeEach((to, from, next) => {
+router.beforeEach(async (to, from, next) => {
   const auth = useAuthStore()
-  auth.restoreSession()
+  // must be awaited — restoreSession now verifies the session with the
+  // backend (GET /auth/me) instead of just reading localStorage, so the
+  // auth checks below need the resolved result, not a stale ref value.
+  await auth.restoreSession()
 
   // not logged in + protected route → go to login
   if (to.meta.requiresAuth && !auth.isLoggedIn) {

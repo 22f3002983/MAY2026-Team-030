@@ -90,6 +90,36 @@ def auto_generate_next_month_dues(flask_app):
             print(f' * Auto-generated dues for {created} residents — {target_month.strftime("%B %Y")}', flush=True)
 
 
+def mark_expired_visitors(flask_app):
+    """Runs every 5 minutes. The API already computes a visitor pass's
+    expiry live from expires_at for every response (see _is_timed_out in
+    routes/visitors.py), so nothing in the app's behavior depends on this —
+    but the stored is_expired column itself was never being flipped, so
+    anyone querying niwaas.db directly (or another tool reading the raw
+    table) saw every pass as not-expired forever. This just keeps that
+    column honest. Only ever flips it True; a pass that's expired stays
+    expired, so there's nothing to walk back."""
+    from app.extensions import db
+    from app.models.visitor import Visitor
+
+    with flask_app.app_context():
+        now = datetime.utcnow()
+        expired = Visitor.query.filter(
+            Visitor.is_expired.is_(False),
+            Visitor.expires_at.isnot(None),
+            Visitor.expires_at < now,
+        ).all()
+
+        if not expired:
+            return
+
+        for visitor in expired:
+            visitor.is_expired = True
+
+        db.session.commit()
+        print(f' * Marked {len(expired)} visitor pass(es) as expired', flush=True)
+
+
 def start_scheduler(flask_app):
     """Start the background scheduler once per running process.
 
@@ -121,8 +151,17 @@ def start_scheduler(flask_app):
         replace_existing=True,
     )
 
+    scheduler.add_job(
+        func=lambda: mark_expired_visitors(flask_app),
+        trigger='interval',
+        minutes=5,
+        id='mark_expired_visitors',
+        replace_existing=True,
+    )
+
     scheduler.start()
     print(' * Amenity auto-release scheduler started (every 5 min)', flush=True)
     print(' * Dues auto-generation scheduler started (daily, checks from the 5th)', flush=True)
+    print(' * Visitor pass expiry scheduler started (every 5 min)', flush=True)
 
     atexit.register(lambda: scheduler.shutdown(wait=False) if scheduler.running else None)

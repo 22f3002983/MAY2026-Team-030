@@ -4,6 +4,46 @@ def pre_register(client, name='Rahul Verma', **overrides):
     return client.post('/api/visitors', json=payload)
 
 
+def test_mark_expired_visitors_flips_the_stored_flag(app, resident_client):
+    from datetime import datetime, timedelta
+    from app.extensions import db
+    from app.models.visitor import Visitor
+    from app.scheduler import mark_expired_visitors
+
+    visitor_id = pre_register(resident_client).get_json()['visitor']['id']
+
+    with app.app_context():
+        visitor = Visitor.query.get(visitor_id)
+        assert visitor.is_expired is False
+        # backdate expires_at so this pass is already timed out
+        visitor.expires_at = datetime.utcnow() - timedelta(minutes=1)
+        db.session.commit()
+
+        mark_expired_visitors(app)
+
+        refreshed = Visitor.query.get(visitor_id)
+        assert refreshed.is_expired is True
+
+
+def test_mark_expired_visitors_leaves_active_passes_alone(app, resident_client):
+    from datetime import datetime, timedelta
+    from app.extensions import db
+    from app.models.visitor import Visitor
+    from app.scheduler import mark_expired_visitors
+
+    visitor_id = pre_register(resident_client).get_json()['visitor']['id']
+
+    with app.app_context():
+        visitor = Visitor.query.get(visitor_id)
+        visitor.expires_at = datetime.utcnow() + timedelta(hours=1)
+        db.session.commit()
+
+        mark_expired_visitors(app)
+
+        refreshed = Visitor.query.get(visitor_id)
+        assert refreshed.is_expired is False
+
+
 def test_resident_can_pre_register_visitor(resident_client):
     r = pre_register(resident_client)
     assert r.status_code == 201

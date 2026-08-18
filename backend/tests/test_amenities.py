@@ -51,6 +51,32 @@ def test_booking_conflicts_with_existing_pending_booking(resident_client, secret
     assert r2.status_code == 409
 
 
+def test_paying_for_booking_credits_funds(resident_client, secretary_client):
+    # a priced, auto-approved amenity so payment_status goes straight to 'pending'
+    amenity = add_amenity(
+        secretary_client, booking_type='automatic',
+        pricing={'type': 'daily', 'rate': 1000, 'min_units': 1},
+    ).get_json()['amenity']
+
+    booking = book(resident_client, amenity['id']).get_json()['booking']
+    assert booking['status'] == 'approved'
+    assert booking['payment_status'] == 'pending'
+    assert booking['price'] == 1000
+
+    r = resident_client.patch(f"/api/amenities/bookings/{booking['id']}/pay")
+    assert r.status_code == 200
+    assert r.get_json()['booking']['payment_status'] == 'paid'
+
+    funds = secretary_client.get('/api/funds').get_json()['funds']
+    total_balance = sum(f['balance'] for f in funds)
+    assert total_balance == 1000
+
+    txns = secretary_client.get('/api/funds/transactions?source=amenity_booking').get_json()['transactions']
+    assert len(txns) > 0
+    assert txns[0]['reference_id'] == booking['id']
+    assert sum(t['amount'] for t in txns) == 1000
+
+
 def test_secretary_can_approve_booking(resident_client, secretary_client):
     amenity = add_amenity(secretary_client).get_json()['amenity']
     booking = book(resident_client, amenity['id']).get_json()['booking']

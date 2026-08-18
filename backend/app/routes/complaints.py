@@ -14,14 +14,19 @@ import uuid
 import threading
 from datetime import datetime
 
+
 complaints_bp = Blueprint('complaints', __name__)
+
 
 VALID_CATEGORIES = ('plumbing', 'electrical', 'cleaning', 'carpentry', 'security', 'gardening', 'pest_control', 'other')
 VALID_TYPES      = ('personal', 'common_area')
 VALID_STATUSES   = ('open', 'in_progress', 'resolved', 'closed')
 
 
+
+
 # ── helpers ───────────────────────────────────────────────────
+
 
 def complaint_to_dict(c):
     """Flattened view of one resident's report, joined with its parent
@@ -53,6 +58,8 @@ def complaint_to_dict(c):
         'vendor_end_time':       issue.vendor_end_time.isoformat() if issue and issue.vendor_end_time else None,
         'resolved_at':           issue.resolved_at.isoformat() if issue and issue.resolved_at else None,
     }
+
+
 
 
 def issue_to_dict(issue, include_reporters=True):
@@ -94,6 +101,8 @@ def issue_to_dict(issue, include_reporters=True):
     return d
 
 
+
+
 def resolve_issue(id_):
     """Accepts either a CommunityIssue id or a Complaint (report) id and
     always returns the parent CommunityIssue — lets secretary actions work
@@ -105,6 +114,8 @@ def resolve_issue(id_):
     if complaint:
         return CommunityIssue.query.get(complaint.issue_id)
     return None
+
+
 
 
 def find_matching_issue(title, category):
@@ -122,12 +133,17 @@ def find_matching_issue(title, category):
     return None
 
 
+
+
 def notify_reporters(issue, message, notif_type, exclude_user_id=None):
     """Notifies everyone following this issue (i.e. everyone who reported it),
     optionally skipping the user who just triggered the change themselves."""
     for report in issue.reports:
         if report.resident and report.resident.user_id and report.resident.user_id != exclude_user_id:
             create_notification(user_id=report.resident.user_id, message=message, type=notif_type)
+
+
+
 
 
 
@@ -139,6 +155,7 @@ def _run_ai_suggestions(flask_app, issue_id, title, description, category, compu
     failure), this try/except is just an extra guard so a DB hiccup here
     can't crash the thread silently without a trace.
 
+
     Runs on every complaint POST, not just new issues — suggest_summary()
     needs to re-merge descriptions whenever another resident joins an
     existing issue. compute_category_priority is False on the join path,
@@ -149,16 +166,20 @@ def _run_ai_suggestions(flask_app, issue_id, title, description, category, compu
             if not issue:
                 return
 
+
             if compute_category_priority:
                 issue.ai_suggested_category = suggest_category(f'{title}. {description}', VALID_CATEGORIES)
                 issue.ai_suggested_priority = suggest_priority(title, description, category)
 
+
             all_descriptions = [c.description for c in Complaint.query.filter_by(issue_id=issue_id).all()]
             issue.ai_suggested_description = suggest_summary(issue.title, issue.category, all_descriptions)
+
 
             db.session.commit()
         except Exception as exc:
             print(f' * [ai] suggestion failed for issue {issue_id}: {exc}', flush=True)
+
 
 # ── POST /api/complaints/check-duplicates — pre-submit AI duplicate check ──
 # Resident-triggered (a button, not as-you-type) before raising a new issue.
@@ -166,24 +187,29 @@ def _run_ai_suggestions(flask_app, issue_id, title, description, category, compu
 # correctly-shaped issue objects loaded for the "Open in Society" tab, so
 # there's no need to duplicate that shape here.
 
+
 @complaints_bp.route('/check-duplicates', methods=['POST'])
 @login_required
 def check_duplicates():
     if current_user.role != 'resident':
         return jsonify({'error': 'Only residents can check for duplicates'}), 403
 
+
     data = request.get_json() or {}
     title       = data.get('title', '').strip()
     description = data.get('description', '').strip()
     category    = data.get('category', '')
 
+
     if not title or not description or category not in VALID_CATEGORIES:
         return jsonify({'error': 'title, description and a valid category are required'}), 400
+
 
     candidates = CommunityIssue.query.filter(
         CommunityIssue.category == category,
         CommunityIssue.status.in_(['open', 'in_progress']),
     ).order_by(CommunityIssue.created_at.desc()).limit(15).all()
+
 
     # skip issues this resident is already part of — they don't need an AI
     # suggestion to "join" something they already know about
@@ -193,12 +219,17 @@ def check_duplicates():
         if not Complaint.query.filter_by(issue_id=i.id, resident_id=resident_id).first()
     ]
 
+
     matched_ids = find_semantic_duplicates(
         title, description,
         [{'id': i.id, 'title': i.title, 'description': i.description} for i in candidates],
     )
 
+
     return jsonify({'matches': matched_ids}), 200
+
+
+
 
 
 
@@ -207,26 +238,34 @@ def check_duplicates():
 # form. Doesn't save anything — just previews what create_complaint's own
 # suggest_category() call would land on.
 
+
 @complaints_bp.route('/suggest', methods=['POST'])
 @login_required
 def suggest_category_endpoint():
     if current_user.role != 'resident':
         return jsonify({'error': 'Only residents can request a category suggestion'}), 403
 
+
     data = request.get_json() or {}
     description = data.get('description', '').strip()
+
 
     if not description:
         return jsonify({'error': 'description is required'}), 400
 
+
     category = suggest_category(description, VALID_CATEGORIES)
+
 
     if not category:
         return jsonify({'category': None}), 200
 
+
     # ai_category.py has no confidence scoring of its own — 'medium' is a
     # fixed placeholder to satisfy the response shape, not a per-request signal
     return jsonify({'category': category, 'confidence': 'medium'}), 200
+
+
 
 
 # ── POST /api/complaints/suggest-priority — AI priority suggestion ──────
@@ -235,26 +274,34 @@ def suggest_category_endpoint():
 # alongside description/category, so the frontend passes it when available
 # for a better suggestion, but the endpoint works without it.
 
+
 @complaints_bp.route('/suggest-priority', methods=['POST'])
 @login_required
 def suggest_priority_endpoint():
     if current_user.role != 'resident':
         return jsonify({'error': 'Only residents can request a priority suggestion'}), 403
 
+
     data = request.get_json() or {}
     description = data.get('description', '').strip()
     category    = data.get('category', '')
     title       = data.get('title', '')
 
+
     if not description or category not in VALID_CATEGORIES:
         return jsonify({'error': 'description and a valid category are required'}), 400
 
+
     priority = suggest_priority(title, description, category)
+
 
     return jsonify({'priority': priority}), 200
 
 
+
+
 # ── POST /api/complaints — raise a complaint (resident only) ──
+
 
 @complaints_bp.route('', methods=['POST'])
 @login_required
@@ -262,26 +309,33 @@ def create_complaint():
     if current_user.role != 'resident':
         return jsonify({'error': 'Only residents can raise complaints'}), 403
 
+
     data = request.get_json()
     if not data:
         return jsonify({'error': 'No data provided'}), 400
+
 
     title       = data.get('title', '').strip()
     description = data.get('description', '').strip()
     category    = data.get('category', '')
     type_       = data.get('type', '')
 
+
     if not title or not description or not category or not type_:
         return jsonify({'error': 'title, description, category and type are required'}), 400
+
 
     if category not in VALID_CATEGORIES:
         return jsonify({'error': f'category must be one of {VALID_CATEGORIES}'}), 400
 
+
     if type_ not in VALID_TYPES:
         return jsonify({'error': f'type must be one of {VALID_TYPES}'}), 400
 
+
     issue = find_matching_issue(title, category)
     is_new_issue = issue is None
+
 
     if is_new_issue:
         issue = CommunityIssue(
@@ -300,6 +354,7 @@ def create_complaint():
         db.session.add(issue)
         db.session.flush()  # get issue.id before the complaint row references it
 
+
     complaint = Complaint(
         id=str(uuid.uuid4()),
         issue_id=issue.id,
@@ -308,6 +363,9 @@ def create_complaint():
     )
     db.session.add(complaint)
     db.session.flush()  # include this report when gathering descriptions below
+
+
+
 
 
 
@@ -321,14 +379,19 @@ def create_complaint():
         daemon=True,
     ).start()
 
+
     db.session.commit()
 
+
     message = 'Complaint raised successfully' if is_new_issue else 'Added your report to an existing open issue'
+
 
     return jsonify({
         'message':   message,
         'complaint': complaint_to_dict(complaint),
     }), 201
+
+
 
 
 # ── GET /api/complaints — list complaints ─────────────────────
@@ -340,6 +403,7 @@ def create_complaint():
 # didn't participate in.
 # secretary sees all community_issues with reporter counts
 
+
 @complaints_bp.route('', methods=['GET'])
 @login_required
 def list_complaints():
@@ -347,6 +411,7 @@ def list_complaints():
     category = request.args.get('category')
     priority = request.args.get('priority')
     view     = request.args.get('view')  # ADDED — 'society' for residents
+
 
     if current_user.role == 'resident':
         # ADDED: browse open issues society-wide, not just this resident's own
@@ -362,8 +427,10 @@ def list_complaints():
                 'total':      len(issues),
             }), 200
 
+
         query = Complaint.query.filter_by(resident_id=current_user.resident.id)
         reports = query.order_by(Complaint.created_at.desc()).all()
+
 
         if status:
             reports = [r for r in reports if r.issue and r.issue.status == status]
@@ -372,10 +439,12 @@ def list_complaints():
         if priority:
             reports = [r for r in reports if r.issue and r.issue.priority == priority]
 
+
         return jsonify({
             'complaints': [complaint_to_dict(r) for r in reports],
             'total':      len(reports),
         }), 200
+
 
     elif current_user.role == 'secretary':
         query = CommunityIssue.query
@@ -386,18 +455,24 @@ def list_complaints():
         if priority:
             query = query.filter_by(priority=priority)
 
+
         issues = query.order_by(CommunityIssue.created_at.desc()).all()
+
 
         return jsonify({
             'complaints': [issue_to_dict(i) for i in issues],
             'total':      len(issues),
         }), 200
 
+
     else:
         return jsonify({'error': 'Unauthorized'}), 403
 
 
+
+
 # ── GET /api/complaints/<id> — get single complaint/issue ─────
+
 
 @complaints_bp.route('/<id_>', methods=['GET'])
 @login_required
@@ -408,13 +483,17 @@ def get_complaint(id_):
             return jsonify({'error': 'Unauthorized'}), 403
         return jsonify({'complaint': complaint_to_dict(complaint)}), 200
 
+
     issue = resolve_issue(id_)
     if not issue:
         return jsonify({'error': 'Not found'}), 404
     return jsonify({'complaint': issue_to_dict(issue)}), 200
 
 
+
+
 # ── PATCH /api/complaints/<id>/assign — assign vendor (secretary only) ──
+
 
 @complaints_bp.route('/<id_>/assign', methods=['PATCH'])
 @login_required
@@ -422,17 +501,22 @@ def assign_vendor(id_):
     if current_user.role != 'secretary':
         return jsonify({'error': 'Only secretary can assign vendors'}), 403
 
+
     issue = resolve_issue(id_)
     if not issue:
         return jsonify({'error': 'Not found'}), 404
 
+
     data      = request.get_json()
     vendor_id = data.get('vendor_id')
+
 
     if not vendor_id:
         return jsonify({'error': 'vendor_id is required'}), 400
 
+
     vendor = Vendor.query.get_or_404(vendor_id)
+
 
     start_raw = data.get('vendor_start_time')
     end_raw   = data.get('vendor_end_time')
@@ -441,10 +525,12 @@ def assign_vendor(id_):
     if end_raw:
         issue.vendor_end_time = datetime.fromisoformat(end_raw.replace('Z', '+00:00'))
 
+
     issue.vendor_id              = vendor.id
     issue.vendor_whatsapp_status = 'notified'
     if issue.status == 'open':
         issue.status = 'in_progress'
+
 
     notify_reporters(
         issue,
@@ -452,14 +538,17 @@ def assign_vendor(id_):
         notif_type='complaint_updated',
     )
 
+
     db.session.commit()
+
 
     complaint = Complaint.query.get(id_)
     result = complaint_to_dict(complaint) if complaint else issue_to_dict(issue)
 
+
     # notify the vendor on Telegram if they've connected their account
     if vendor.telegram_chat_id:
-        from backend.app.telegram_bot import send_telegram_message
+        from app.telegram_bot import send_telegram_message
         reporter = complaint.resident if complaint else (issue.reports[0].resident if issue.reports else None)
         flat_number = reporter.flat.flat_number if reporter and reporter.flat else 'N/A'
         vendor_message = (
@@ -475,22 +564,30 @@ def assign_vendor(id_):
     else:
         print(f' * [telegram] vendor {vendor.id} has no telegram_chat_id, skipping notification', flush=True)
 
+
     return jsonify({
         'message':   f'Complaint assigned to {vendor.name}',
         'complaint': result,
     }), 200
 
 
+
+
 # ── PATCH /api/complaints/<id>/status — update status ────────
+
 
 @complaints_bp.route('/<id_>/status', methods=['PATCH'])
 @login_required
 def update_status(id_):
-    data       = request.get_json()
-    new_status = data.get('status')
+    data           = request.get_json()
+    new_status     = data.get('status')
+    payment_amount = data.get('payment_amount')
+    payment_fund   = data.get('payment_fund')
+
 
     if new_status not in VALID_STATUSES:
         return jsonify({'error': f'status must be one of {VALID_STATUSES}'}), 400
+
 
     if current_user.role == 'resident':
         complaint = Complaint.query.get_or_404(id_)
@@ -504,9 +601,11 @@ def update_status(id_):
     else:
         return jsonify({'error': 'Unauthorized'}), 403
 
+
     issue.status = new_status
     if new_status == 'resolved':
         issue.resolved_at = datetime.utcnow()
+
 
     # let everyone following this issue know it moved, minus whoever just
     # triggered this update themselves (no point notifying yourself)
@@ -516,6 +615,30 @@ def update_status(id_):
         notif_type='complaint_updated',
         exclude_user_id=current_user.id if current_user.role == 'resident' else None,
     )
+
+
+    # notify the assigned vendor on Telegram that the job is done, secretary-
+    # initiated closures only — mirrors the assignment notification above
+    if (
+        current_user.role == 'secretary'
+        and new_status in ('resolved', 'closed')
+        and issue.vendor
+        and issue.vendor.telegram_chat_id
+    ):
+        from app.telegram_bot import send_telegram_message
+        if payment_amount:
+            payment_line = f'Payment: ₹{payment_amount}' + (f' ({payment_fund})' if payment_fund else '')
+        else:
+            payment_line = 'Payment: not applicable'
+        vendor_message = (
+            f'✅ Job Completed — Niwaas RWA\n\n'
+            f'Complaint: {issue.title}\n'
+            f'Category: {issue.category}\n'
+            f'{payment_line}\n\n'
+            f'Thank you for your work!\n'
+            f'— Niwaas Secretary'
+        )
+        send_telegram_message(issue.vendor.telegram_chat_id, vendor_message)
 
     db.session.commit()
 

@@ -24,17 +24,26 @@ async function fetchVendors() {
   vendors.value = data.vendors || []
 }
 
-onMounted(fetchVendors)
+onMounted(() => {
+  fetchVendors()
+  fetchPaymentHistory()
+})
 
-// salary payments recorded through the Pay Salaries flow
-const paymentHistory = ref([
-  { id: 'PAY-1001', vendorId: 4, vendorName: 'Clean Society',        amount: 18000, date: '01 Jun 2026' },
-  { id: 'PAY-1002', vendorId: 5, vendorName: 'Manoj Kumar (Security)', amount: 22000, date: '01 Jun 2026' },
-  { id: 'PAY-1003', vendorId: 6, vendorName: 'Ramesh (Gardener)',    amount: 12000, date: '01 Jun 2026' },
-  { id: 'PAY-1004', vendorId: 4, vendorName: 'Clean Society',        amount: 18000, date: '01 Jul 2026' },
-  { id: 'PAY-1005', vendorId: 5, vendorName: 'Manoj Kumar (Security)', amount: 22000, date: '01 Jul 2026' },
-  { id: 'PAY-1006', vendorId: 6, vendorName: 'Ramesh (Gardener)',    amount: 12000, date: '01 Jul 2026' },
-])
+// salary payments recorded through the Pay Salaries flow — pulled from the
+// real fund transaction ledger (source='vendor_salary'), not mocked
+const paymentHistory = ref([])
+
+async function fetchPaymentHistory() {
+  const res = await fetch(`${API}/funds/transactions?source=vendor_salary`, { credentials: 'include' })
+  if (!res.ok) return // secretary-only endpoint; silently skip if it 403s
+  const data = await res.json()
+  paymentHistory.value = (data.transactions || []).map(t => ({
+    id: t.id,
+    vendorId: t.reference_id,
+    amount: t.amount,
+    date: new Date(t.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
+  }))
+}
 
 /* ---------------- Search / filter ---------------- */
 
@@ -132,7 +141,6 @@ async function removeVendor(vendor) {
   if (!confirmed) return
   await fetch(`${API}/vendors/${vendor.id}`, { method: 'DELETE', credentials: 'include' })
   vendors.value = vendors.value.filter(v => v.id !== vendor.id)
-  paymentHistory.value = paymentHistory.value.filter(p => p.vendorId !== vendor.id)
   showToast(`${vendor.name} removed`)
 }
 
@@ -166,7 +174,7 @@ const detailVendorTotalPaid = computed(() =>
 
 const showPaySalaries = ref(false)
 const selectedForPayment = ref(new Set())
-const paymentStep = ref('review') // 'review' | 'done'
+const paymentStep = ref('review') // 'review' | 'breakdown' | 'done'
 const lastPaidCount = ref(0)
 const lastPaidTotal = ref(0)
 
@@ -176,6 +184,8 @@ const salariedActiveVendors = computed(() =>
 
 function openPaySalaries() {
   paymentStep.value = 'review'
+  paySalariesError.value = ''
+  breakdown.value = null
   selectedForPayment.value = new Set(salariedActiveVendors.value.map(v => v.id))
   showPaySalaries.value = true
 }
@@ -198,21 +208,71 @@ const totalToPay = computed(() =>
   selectedVendors.value.reduce((sum, v) => sum + (v.salary || 0), 0)
 )
 
-function confirmPaySalaries() {
+const payingSalaries = ref(false)
+const paySalariesError = ref('')
+
+// fund names the breakdown card shows, in the same operating -> contingency
+// -> sinking order the backend cascades through
+const FUND_LABELS = { operating: 'Operating', contingency: 'Contingency', sinking: 'Sinking' }
+
+const breakdown = ref(null)       // { vendors, total, funds, shortfall, sufficient } from the preview call
+const loadingBreakdown = ref(false)
+
+// funds the payment will actually draw from — hides zero-draw funds so the
+// secretary only sees what's relevant (e.g. just Operating, most of the time)
+const fundsInUse = computed(() => (breakdown.value?.funds || []).filter(f => f.amount_drawn > 0))
+
+async function reviewPayment() {
   if (selectedVendors.value.length === 0) return
-  const today = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
-
-  selectedVendors.value.forEach(v => {
-    paymentHistory.value.unshift({
-      id: `PAY-${1000 + paymentHistory.value.length + 1}`,
-      vendorId: v.id, vendorName: v.name, amount: v.salary, date: today,
+  paySalariesError.value = ''
+  loadingBreakdown.value = true
+  try {
+    const res = await fetch(`${API}/vendors/pay-salaries/preview`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vendor_ids: selectedVendors.value.map(v => v.id) }),
     })
-  })
+    const data = await res.json()
+    if (!res.ok) {
+      paySalariesError.value = data.error || 'Failed to preview payment'
+      return
+    }
+    breakdown.value = data
+    paymentStep.value = 'breakdown'
+  } finally {
+    loadingBreakdown.value = false
+  }
+}
 
-  lastPaidCount.value = selectedVendors.value.length
-  lastPaidTotal.value = totalToPay.value
-  paymentStep.value = 'done'
-  showToast(`Paid ${lastPaidCount.value} vendor(s) · ₹${lastPaidTotal.value.toLocaleString('en-IN')} total`)
+async function confirmPaySalaries() {
+  if (selectedVendors.value.length === 0) return
+  paySalariesError.value = ''
+  payingSalaries.value = true
+
+  try {
+    const res = await fetch(`${API}/vendors/pay-salaries`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vendor_ids: selectedVendors.value.map(v => v.id) }),
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      paySalariesError.value = data.error || 'Failed to pay salaries'
+      // funds moved under us since the preview (e.g. another payment ran) —
+      // drop back to review so the secretary can re-check the breakdown
+      paymentStep.value = 'review'
+      return
+    }
+
+    await fetchPaymentHistory() // pick up the real ledger entries just created
+
+    lastPaidCount.value = data.paid_count
+    lastPaidTotal.value = data.total_paid
+    paymentStep.value = 'done'
+    showToast(`Paid ${lastPaidCount.value} vendor(s) · ₹${lastPaidTotal.value.toLocaleString('en-IN')} total`)
+  } finally {
+    payingSalaries.value = false
+  }
 }
 
 /* ---------------- Toast ---------------- */
@@ -465,10 +525,49 @@ function showToast(text) {
                 <span class="pay-summary-total">₹{{ totalToPay.toLocaleString('en-IN') }}</span>
               </div>
 
-              <button class="btn-primary" :disabled="selectedVendors.length === 0" @click="confirmPaySalaries">
-                Confirm Payment
+              <p v-if="paySalariesError" class="error-msg">{{ paySalariesError }}</p>
+
+              <button class="btn-primary" :disabled="selectedVendors.length === 0 || loadingBreakdown" @click="reviewPayment">
+                {{ loadingBreakdown ? 'Checking funds...' : 'Review Payment' }}
               </button>
             </template>
+          </template>
+
+          <template v-else-if="paymentStep === 'breakdown'">
+            <div class="pay-summary">
+              <span>Paying <strong>{{ breakdown.vendors.length }}</strong> vendor(s)</span>
+              <span class="pay-summary-total">₹{{ breakdown.total.toLocaleString('en-IN') }}</span>
+            </div>
+
+            <p class="section-label">Funds this will be drawn from</p>
+            <div class="fund-breakdown-list">
+              <div v-for="f in fundsInUse" :key="f.fund_name" class="fund-breakdown-row">
+                <span class="fund-breakdown-name">{{ FUND_LABELS[f.fund_name] || f.fund_name }}</span>
+                <span class="fund-breakdown-amounts">
+                  ₹{{ f.amount_drawn.toLocaleString('en-IN') }} of ₹{{ f.balance_before.toLocaleString('en-IN') }}
+                  <span class="fund-breakdown-after">→ ₹{{ f.balance_after.toLocaleString('en-IN') }} left</span>
+                </span>
+              </div>
+            </div>
+
+            <p v-if="fundsInUse.length > 1" class="breakdown-note">
+              Operating alone can't cover this — the remainder is being pulled from
+              {{ fundsInUse.slice(1).map(f => FUND_LABELS[f.fund_name] || f.fund_name).join(' and ') }}.
+            </p>
+
+            <p v-if="!breakdown.sufficient" class="error-msg">
+              Operating, contingency and sinking funds together are still ₹{{ breakdown.shortfall.toLocaleString('en-IN') }} short.
+              This payment can't go through until funds are topped up.
+            </p>
+
+            <p v-if="paySalariesError" class="error-msg">{{ paySalariesError }}</p>
+
+            <div class="breakdown-actions">
+              <button class="btn-secondary" :disabled="payingSalaries" @click="paymentStep = 'review'">Back</button>
+              <button class="btn-primary" :disabled="payingSalaries || !breakdown.sufficient" @click="confirmPaySalaries">
+                {{ payingSalaries ? 'Paying...' : 'Confirm Payment' }}
+              </button>
+            </div>
           </template>
 
           <template v-else>
@@ -1034,6 +1133,42 @@ label {
 }
 
 .pay-summary-total { font-size: var(--font-size-lg); font-weight: 800; color: var(--c-800); }
+
+.fund-breakdown-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.fund-breakdown-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-soft);
+  font-size: var(--font-size-sm);
+}
+
+.fund-breakdown-name { font-weight: 700; color: var(--color-text-primary); }
+.fund-breakdown-amounts { color: var(--color-text-secondary); text-align: right; }
+.fund-breakdown-after { display: block; font-size: var(--font-size-xs); color: var(--color-text-muted); }
+
+.breakdown-note {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  margin-bottom: 12px;
+}
+
+.breakdown-actions {
+  display: flex;
+  gap: 10px;
+}
+.breakdown-actions .btn-secondary,
+.breakdown-actions .btn-primary { flex: 1; }
 
 .history-list {
   display: flex;

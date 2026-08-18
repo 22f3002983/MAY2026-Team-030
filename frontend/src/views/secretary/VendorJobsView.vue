@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { formatPhoneDisplay } from '../../utils/phone'
 
 const API = 'http://localhost:5000/api'
 
@@ -68,7 +69,7 @@ async function fetchJobs() {
         category: vendor ? capitalize(vendor.category) : capitalize(i.category),
         description: i.description,
         vendor_name: vendor ? vendor.name : '—',
-        vendor_phone: vendor ? vendor.phone : '—',
+        vendor_phone: vendor ? (formatPhoneDisplay(vendor.phone) || '—') : '—',
         deadline: formatDateLong(i.vendor_end_time),
         status: jobStatus(i),
         whatsapp_status: i.vendor_whatsapp_status || 'no_response',

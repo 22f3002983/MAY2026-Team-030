@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import MetricCard from '../../components/dashboard/MetricCard.vue'
 import api from '../../api/axios'
+import { digitsOnly, toStoredPhone } from '../../utils/phone'
 
 // CHANGED — was a hardcoded placeholder array; now populated live from
 // GET /api/flats/directory (flat -> primary resident lookup)
@@ -208,7 +209,7 @@ async function rejectAtGate(visitor) {
 // =====================================================================
 const showUnexpectedForm = ref(false)
 const uvName    = ref('')
-const uvPhone   = ref('')
+const uvPhone   = ref('')   // 10 raw digits; +91 prefix is shown separately
 const uvVehicle = ref('')
 const uvFlat    = ref('')
 const uvPurpose = ref('')
@@ -230,6 +231,10 @@ function closeUnexpectedForm() {
   showUnexpectedForm.value = false
 }
 
+function onUvPhoneInput(e) {
+  uvPhone.value = digitsOnly(e.target.value)
+}
+
 async function sendForApproval() {
   uvError.value = ''
   if (!uvName.value.trim()) { uvError.value = 'Visitor name is required'; return }
@@ -237,13 +242,17 @@ async function sendForApproval() {
 
   const residentId = residentIdForFlat(uvFlat.value)
   if (!residentId) { uvError.value = 'No resident on file for that flat'; return }
+  if (uvPhone.value && uvPhone.value.length !== 10) {
+    uvError.value = 'Phone number must be exactly 10 digits'
+    return
+  }
 
   uvSending.value = true
   try {
     const res = await api.post('/visitors/gate-request', {
       name:           uvName.value.trim(),
       resident_id:    residentId,
-      phone:          uvPhone.value.trim() || undefined,
+      phone:          toStoredPhone(uvPhone.value) || undefined,
       vehicle_number: uvVehicle.value.trim() || undefined,
       reason:         uvPurpose.value.trim() || undefined,
     })
@@ -391,7 +400,18 @@ async function sendForApproval() {
         </div>
         <div class="uv-field">
           <label>Phone <span class="optional">(optional)</span></label>
-          <input v-model="uvPhone" type="text" class="pass-input uv-input" placeholder="98xxx xxxxx" />
+          <div class="phone-input-group">
+            <span class="phone-prefix">+91</span>
+            <input
+              :value="uvPhone"
+              @input="onUvPhoneInput"
+              type="text"
+              inputmode="numeric"
+              maxlength="10"
+              class="pass-input uv-input phone-input"
+              placeholder="98XXXXXXXX"
+            />
+          </div>
         </div>
         <div class="uv-field">
           <label>Vehicle number <span class="optional">(optional)</span></label>
@@ -661,6 +681,21 @@ async function sendForApproval() {
 .uv-field { display: flex; flex-direction: column; gap: 6px; width: 100%; }
 .uv-field label { font-size: var(--font-size-xs); font-weight: 700; color: var(--c-800); }
 .uv-input { width: 100%; font-family: var(--font-family); font-weight: 500; letter-spacing: normal; font-size: var(--font-size-sm); color: var(--color-text-primary); background: var(--color-surface-soft); border: 1.5px solid var(--color-border-soft); }
+
+.phone-input-group { display: flex; align-items: center; gap: 8px; }
+.phone-prefix {
+  height: 46px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  border: 1.5px solid var(--color-border-soft);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-soft);
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.phone-input { flex: 1; }
 .optional { font-weight: 500; color: var(--color-text-muted); }
 .error-msg { font-size: var(--font-size-xs); color: var(--color-danger); }
 

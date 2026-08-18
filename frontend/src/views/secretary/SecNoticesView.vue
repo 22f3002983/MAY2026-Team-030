@@ -115,7 +115,7 @@ const filteredNotices = computed(() => {
 
   // block filter: keep notices targeted at the selected block, plus notices meant for everyone
   if (relevanceFilter.value !== 'all') {
-    list = list.filter(n => n.relevance === relevanceFilter.value || n.relevance === 'all')
+    list = list.filter(n => n.relevance === relevanceFilter.value)
   }
 
   if (searchQuery.value) {

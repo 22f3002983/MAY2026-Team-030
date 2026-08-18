@@ -1,10 +1,12 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import api from '../../api/axios'
+import { digitsOnly, toStoredPhone, extractDigits } from '../../utils/phone'
 
 const mode         = ref('Pre-register')
 const visitorName  = ref('')
-const phone        = ref('')
+const phone        = ref('')   // 10 raw digits; +91 prefix is shown separately
+
 const expectedDate = ref('')
 const expectedTime = ref('')
 const reason       = ref('')
@@ -16,6 +18,9 @@ const visitors        = ref([])
 const visitorsLoading  = ref(true)
 
 const modes = ['Pre-register', 'Walk-in']
+function onPhoneInput(e) {
+  phone.value = e.target.value.replace(/\D/g, '').slice(0, 10)
+}
 
 // NOTE: the backend's POST /visitors route only accepts
 // name / phone / expected_date / expected_time / reason / vehicle_number.
@@ -205,6 +210,7 @@ async function submit() {
   formError.value = ''
 
   if (!visitorName.value.trim()) { formError.value = 'Visitor name is required'; return }
+  if (phone.value && phone.value.length !== 10) { formError.value = 'Phone number must be 10 digits'; return }
   if (mode.value === 'Pre-register' && (!expectedDate.value || !expectedTime.value)) {
     formError.value = 'Expected date and time are required for pre-registration'; return
   }
@@ -213,7 +219,7 @@ async function submit() {
   try {
     const response = await api.post('/visitors', {
       name: visitorName.value,
-      phone: phone.value || null,
+      phone: phone.value ? `+91-${phone.value}` : null,
       expected_date: mode.value === 'Pre-register' ? (expectedDate.value || null) : null,
       expected_time: mode.value === 'Pre-register' ? (expectedTime.value || null) : null,
       reason: reason.value || null,
@@ -251,7 +257,7 @@ function openRegenerate() { regenerateQuery.value = ''; showRegenerate.value = t
 function generatePassAgain(v) {
   mode.value = 'Pre-register'
   visitorName.value = v.name
-  phone.value = v.phone || ''
+  phone.value = extractDigits(v.phone)
   reason.value = v.reason || ''
   expectedDate.value = ''; expectedTime.value = ''
   showRegenerate.value = false
@@ -341,7 +347,18 @@ function eventDotClass(type) { return EVENT_DOT_CLASS[type] || 'dot-created' }
         <div class="two-fields">
           <div class="field">
             <label>Phone</label>
-            <input v-model="phone" type="text" placeholder="98xxx xxxxx" class="n-input" />
+            <div class="phone-input-wrap">
+              <span class="phone-prefix">+91</span>
+              <input
+                :value="phone"
+                @input="onPhoneInput"
+                type="tel"
+                inputmode="numeric"
+                maxlength="10"
+                placeholder="98xxxxxxxx"
+                class="n-input phone-input"
+              />
+            </div>
           </div>
           <div class="field">
             <label>Flat</label>
@@ -483,7 +500,7 @@ function eventDotClass(type) { return EVENT_DOT_CLASS[type] || 'dot-created' }
                 <span class="visitor-meta">{{ visitorMeta(v) }}</span>
                 <span :class="['badge', statusClass(v)]">{{ statusLabel(v) }}</span>
               </div>
-              <button class="btn-mini-primary" @click="generatePassAgain(v)">Generate pass again</button>
+              <button v-if="displayStatus(v) !== 'expired'" class="btn-mini-primary" @click="generatePassAgain(v)">Generate pass again</button>
             </div>
             <div v-if="regenerateCandidates.length === 0" class="empty-state"><p>No matching visitors</p></div>
           </div>
@@ -536,6 +553,10 @@ label { display: block; font-size: var(--font-size-xs); font-weight: 700; color:
 .n-input { width: 100%; height: 42px; padding: 0 12px; border: 1.5px solid var(--color-border-soft); border-radius: var(--radius-md); font-size: var(--font-size-sm); background: var(--color-surface-soft); color: var(--color-text-primary); outline: none; font-family: var(--font-family); transition: border-color var(--transition-fast); }
 .n-input:focus { border-color: var(--c-600); }
 .n-disabled { background: var(--color-bg); color: var(--color-text-muted); cursor: not-allowed; }
+.phone-input-wrap { display: flex; align-items: center; border: 1.5px solid var(--color-border-soft); border-radius: var(--radius-md); background: var(--color-surface-soft); overflow: hidden; transition: border-color var(--transition-fast); }
+.phone-input-wrap:focus-within { border-color: var(--c-600); }
+.phone-prefix { padding: 0 8px 0 12px; font-size: var(--font-size-sm); font-weight: 700; color: var(--color-text-muted); border-right: 1.5px solid var(--color-border-soft); height: 42px; display: flex; align-items: center; flex-shrink: 0; }
+.phone-input { border: none; background: transparent; height: 42px; }
 .two-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
 .two-fields .field { margin-bottom: 0; }
 .error-msg { font-size: var(--font-size-xs); color: var(--color-danger); margin-top: 10px; }

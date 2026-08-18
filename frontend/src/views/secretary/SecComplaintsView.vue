@@ -2,7 +2,9 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import api from '../../api/axios' // adjust path if this view lives elsewhere
 
+
 /* ---------------- Filters ---------------- */
+
 
 const filterStatus   = ref('Open')
 const filterCategory = ref('all')
@@ -10,12 +12,14 @@ const filterPriority = ref('all')
 const sortBy         = ref('priority-desc')
 const searchQuery    = ref('')
 
+
 const statusFilters   = ['All', 'Open', 'In Progress', 'Resolved', 'Rejected']
 // ADDED: Security, Gardening, Pest Control — matches the expanded
 // CommunityIssue.category enum
 const categoryOptions = ['all', 'Plumbing', 'Electrical', 'Cleaning', 'Carpentry', 'Security', 'Gardening', 'Pest Control', 'Other']
 const priorityOptions = ['all', 'High', 'Medium', 'Low']
 const priorityRank    = { High: 3, Medium: 2, Low: 1 }
+
 
 const durationOptions = [
   { label: '30 mins', minutes: 30 },
@@ -25,6 +29,7 @@ const durationOptions = [
   { label: '3 hr',     minutes: 180 },
 ]
 
+
 /* ---------------- Backend <-> UI mapping ----------------
    Issue category/priority are just cased differently from the backend
    ('plumbing' -> 'Plumbing'). 'pest_control' needs its own case since it's
@@ -32,7 +37,9 @@ const durationOptions = [
    'rejected' value — we repurpose 'closed' for it, since CommunityIssue
    .status only has open/in_progress/resolved/closed. */
 
+
 const STATUS_TO_FRONTEND = { open: 'Open', in_progress: 'In Progress', resolved: 'Resolved', closed: 'Rejected' }
+
 
 function capitalize(s) {
   if (!s) return s
@@ -40,16 +47,19 @@ function capitalize(s) {
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
+
 // reverse of capitalize — used when sending filters/category back to the API
 function toBackendCategory(c) {
   if (!c) return c
   return c.toLowerCase().replace(' ', '_')
 }
 
+
 function formatDate(iso) {
   if (!iso) return ''
   return new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
 }
+
 
 // the backend returns naive datetime strings with no trailing 'Z'/offset,
 // but they're always UTC instants (we only ever send UTC via toISOString())
@@ -58,6 +68,7 @@ function asUtcIso(s) {
   if (!s) return s
   return /[Zz]|[+-]\d\d:\d\d$/.test(s) ? s : s + 'Z'
 }
+
 
 // a vendor's category is the *profession* ('plumber'); an issue's category is
 // the *problem type* ('plumbing') — different enums, so assigning a vendor
@@ -68,10 +79,12 @@ const ISSUE_TO_VENDOR_CATEGORY = {
   'Pest Control': 'pest_control', Other: 'other',
 }
 
+
 /* ---------------- Vendors ---------------- */
 // engagementType: 'per_job' -> paid per completed task (plumbers, electricians, etc.)
 //                 'salaried' -> fixed monthly salary, no per-task payment
 const vendors = ref([])
+
 
 async function fetchVendors() {
   try {
@@ -88,9 +101,11 @@ async function fetchVendors() {
   }
 }
 
+
 function vendorByName(name) {
   return vendors.value.find(v => v.name === name) || null
 }
+
 
 // Mock AI time estimates per category - replace with real model output in Sprint 1
 const estimatedMinutesByCategory = {
@@ -104,9 +119,12 @@ const estimatedMinutesByCategory = {
   Other: 90,
 }
 
+
 /* ---------------- Residents (flat lookup for the reports list) ---------------- */
 
+
 const residentFlats = ref({})
+
 
 async function fetchResidentFlats() {
   try {
@@ -119,11 +137,14 @@ async function fetchResidentFlats() {
   }
 }
 
+
 /* ---------------- Funds (paying non-salaried vendors on completion) ----------------
    Same "Operating first, unlock other funds only if Operating can't cover
    it" logic as the Society Funds page's manual transaction form. */
 
+
 const funds = ref([])
+
 
 async function fetchFunds() {
   try {
@@ -134,10 +155,12 @@ async function fetchFunds() {
   }
 }
 
+
 function fundLabel(name) {
   const map = { operating: 'Operating Fund', sinking: 'Sinking Fund', contingency: 'Contingency Fund' }
   return map[name] || name
 }
+
 
 /* ---------------- Issues (community / common-area only) ---------------- */
 // Personal, inside-the-flat complaints never appear here — they live in the
@@ -145,14 +168,17 @@ function fundLabel(name) {
 // Multiple residents can report the same issue, so each issue carries a
 // `reports` array instead of a single resident.
 
+
 // CommunityIssue has no payment or rejection-reason columns yet, so both are
 // kept client-side only, keyed by issue id — they reset on page reload.
 const localPayments     = ref({}) // issueId -> { status, amount, fund }
 const rejectionReasons  = ref({}) // issueId -> reason text
 
+
 const issues = ref([])
 const loading = ref(true)
 const loadError = ref('')
+
 
 function mapIssue(i) {
   const vendorObj = vendors.value.find(v => v.id === i.vendor_id)
@@ -190,6 +216,7 @@ function mapIssue(i) {
   }
 }
 
+
 async function fetchIssues(silent = false) {
   if (!silent) loading.value = true
   loadError.value = ''
@@ -204,9 +231,11 @@ async function fetchIssues(silent = false) {
   }
 }
 
+
 // picks up category/priority once the backend's background AI thread
 // finishes, without the secretary needing to manually refresh
 let aiRefreshInterval = null
+
 
 onMounted(async () => {
   await fetchVendors()
@@ -214,16 +243,20 @@ onMounted(async () => {
   await fetchFunds()
   await fetchIssues()
 
+
   aiRefreshInterval = setInterval(() => fetchIssues(true), 10000)
 })
+
 
 onUnmounted(() => {
   if (aiRefreshInterval) clearInterval(aiRefreshInterval)
 })
 
+
 // FIX: this computed was missing entirely — filtered/openCount/unassignedCount/
 // mergeableIssues all depend on it, causing a ReferenceError and blank screen.
 const visibleIssues = computed(() => issues.value.filter(i => i.status !== 'Merged'))
+
 
 const filtered = computed(() => {
   const q = searchQuery.value.toLowerCase()
@@ -245,8 +278,10 @@ const filtered = computed(() => {
   })
 })
 
+
 const openCount       = computed(() => visibleIssues.value.filter(i => ['Open', 'In Progress'].includes(i.status)).length)
 const unassignedCount = computed(() => visibleIssues.value.filter(i => !i.vendor && i.status !== 'Resolved').length)
+
 
 const sortedFiltered = computed(() => {
   const arr = [...filtered.value]
@@ -263,10 +298,13 @@ const sortedFiltered = computed(() => {
   }
 })
 
+
 /* ---------------- Detail modal ---------------- */
+
 
 const showDetail = ref(false)
 const selected   = ref(null)
+
 
 const detailCategory = ref('')
 const detailVendor   = ref('')
@@ -279,11 +317,14 @@ const mergeTarget    = ref('')
 const lastAiNote      = ref('')
 const rejectReason    = ref('')
 
+
 /* ---------------- Toast ---------------- */
+
 
 const toastVisible = ref(false)
 const toastText    = ref('')
 let toastTimer = null
+
 
 function showToast(text) {
   toastText.value = text
@@ -291,6 +332,7 @@ function showToast(text) {
   clearTimeout(toastTimer)
   toastTimer = setTimeout(() => { toastVisible.value = false }, 2600)
 }
+
 
 function openDetail(issue) {
   selected.value = issue
@@ -313,10 +355,12 @@ function openDetail(issue) {
   showDetail.value = true
 }
 
+
 function closeDetail() {
   showDetail.value = false
   selected.value = null
 }
+
 
 // If the category changes, drop a vendor that no longer matches it
 watch(detailCategory, () => {
@@ -325,9 +369,11 @@ watch(detailCategory, () => {
   }
 })
 
+
 const vendorsForCategory = computed(() =>
   vendors.value.filter(v => v.category === ISSUE_TO_VENDOR_CATEGORY[detailCategory.value])
 )
+
 
 function suggestVendorAI() {
   const candidates = vendorsForCategory.value
@@ -344,15 +390,18 @@ function suggestVendorAI() {
   lastAiNote.value = `Matched ${best.name} (lowest current workload) · ~${durationOptions.find(d => d.minutes === detailDuration.value)?.label || detailDuration.value + ' min'}`
 }
 
+
 function slotRange(startIso, minutes) {
   const start = new Date(startIso)
   return { start, end: new Date(start.getTime() + minutes * 60000) }
 }
 
+
 const proposedSlot = computed(() => {
   if (!detailDate.value || !detailTime.value) return null
   return slotRange(`${detailDate.value}T${detailTime.value}`, detailDuration.value)
 })
+
 
 const conflict = computed(() => {
   if (!detailVendor.value || !proposedSlot.value) return null
@@ -367,6 +416,7 @@ const conflict = computed(() => {
   }) || null
 })
 
+
 function formatSlot(iso, minutes) {
   if (!iso) return ''
   const d = new Date(iso)
@@ -376,14 +426,17 @@ function formatSlot(iso, minutes) {
   return `${datePart}, ${timePart} · ${durLabel}`
 }
 
+
 async function confirmAssign() {
   if (!detailVendor.value || !proposedSlot.value || conflict.value) return
   const issue = selected.value
   const vendorObj = vendorByName(detailVendor.value)
   if (!vendorObj) return
 
+
   const wasUnassigned = !issue.vendor
   const { start, end } = proposedSlot.value
+
 
   try {
     await api.patch(`/complaints/${issue.id}/assign`, {
@@ -399,10 +452,13 @@ async function confirmAssign() {
   }
 }
 
+
 /* ---------------- Complete / payment ---------------- */
+
 
 const completingVendor = computed(() => vendorByName(selected.value?.vendor))
 const needsPayment      = computed(() => completingVendor.value?.engagementType === 'per_job')
+
 
 // Operating is the default source. Other funds unlock only if Operating's
 // balance can't cover the amount currently being entered — mirrors the
@@ -415,6 +471,7 @@ const completeFundOptions = computed(() => {
   ? [...funds.value].sort((a, b) => (a.fund_name === 'operating' ? -1 : b.fund_name === 'operating' ? 1 : 0))
   : funds.value.filter(f => f.fund_name === 'operating')
 })
+
 
 // Keep the selected fund valid if the available options change (e.g. user
 // picked a non-Operating fund, then lowered the amount so Operating becomes
@@ -434,9 +491,11 @@ const selectedFundInsufficient = computed(() => {
     : null
 })
 
+
 async function confirmComplete() {
   if (needsPayment.value && (!completePaymentAmount.value || !completeFundName.value)) return
   const issue = selected.value
+
 
   try {
     if (needsPayment.value) {
@@ -450,7 +509,13 @@ async function confirmComplete() {
       })
     }
 
-    await api.patch(`/complaints/${issue.id}/status`, { status: 'resolved' })
+
+    await api.patch(`/complaints/${issue.id}/status`, {
+      status: 'resolved',
+      payment_amount: needsPayment.value ? Number(completePaymentAmount.value) : null,
+      payment_fund: needsPayment.value ? completeFundName.value : null,
+    })
+
 
     // no payment column on CommunityIssue yet — remembered client-side only
     localPayments.value = {
@@ -459,6 +524,7 @@ async function confirmComplete() {
         ? { status: 'paid', amount: Number(completePaymentAmount.value), fund: completeFundName.value }
         : { status: 'not_applicable', amount: null, fund: null },
     }
+
 
     await fetchIssues()
     if (needsPayment.value) await fetchFunds() // balances just changed
@@ -472,17 +538,21 @@ async function confirmComplete() {
   }
 }
 
+
 /* ---------------- Merge ---------------- */
+
 
 const mergeableIssues = computed(() =>
   visibleIssues.value.filter(i => i.id !== selected.value?.id && !['Resolved', 'Rejected'].includes(i.status))
 )
+
 
 async function confirmMerge() {
   if (!mergeTarget.value) return
   const target = issues.value.find(i => i.id === mergeTarget.value)
   const current = selected.value
   if (!target || !current) return
+
 
   try {
     await api.post(`/complaints/${target.id}/merge`, { other_issue_id: current.id })
@@ -494,11 +564,14 @@ async function confirmMerge() {
   }
 }
 
+
 /* ---------------- Reject ---------------- */
+
 
 async function confirmReject() {
   if (!rejectReason.value.trim()) return
   const issue = selected.value
+
 
   try {
     // backend has no dedicated 'rejected' status — 'closed' is the closest
@@ -506,8 +579,10 @@ async function confirmReject() {
     // "Rejected" in the UI (see STATUS_TO_FRONTEND)
     await api.patch(`/complaints/${issue.id}/status`, { status: 'closed' })
 
+
     // no rejection-reason column on CommunityIssue yet — remembered client-side only
     rejectionReasons.value = { ...rejectionReasons.value, [issue.id]: rejectReason.value.trim() }
+
 
     await fetchIssues()
     showToast(`${issue.title} rejected`)
@@ -517,13 +592,16 @@ async function confirmReject() {
   }
 }
 
+
 /* ---------------- Badge helpers ---------------- */
+
 
 function priorityClass(p) {
   if (p === 'High')   return 'pri-high'
   if (p === 'Medium') return 'pri-medium'
   return 'pri-low'
 }
+
 
 function statusClass(s) {
   if (s === 'Open')        return 'status-open'
@@ -534,8 +612,10 @@ function statusClass(s) {
 }
 </script>
 
+
 <template>
   <div class="sec-issues">
+
 
     <!-- header -->
     <div class="page-header">
@@ -544,6 +624,7 @@ function statusClass(s) {
         <p class="page-sub">{{ visibleIssues.length }} total · {{ openCount }} open · {{ unassignedCount }} unassigned</p>
       </div>
     </div>
+
 
     <!-- toolbar -->
     <div class="toolbar">
@@ -585,6 +666,7 @@ function statusClass(s) {
       </div>
     </div>
 
+
     <!-- issues table -->
     <div class="table-wrap">
       <table class="issues-table">
@@ -602,10 +684,12 @@ function statusClass(s) {
         <tbody>
           <tr v-for="i in sortedFiltered" :key="i.id" class="issue-row" @click="openDetail(i)">
 
+
             <td>
               <span class="issue-title">{{ i.title }}</span>
               <span class="issue-meta">{{ i.location }} · {{ i.id }}</span>
             </td>
+
 
             <td>
               <span class="category-badge">{{ i.category }}</span>
@@ -619,6 +703,7 @@ function statusClass(s) {
               </span>
             </td>
 
+
             <td>
               <span :class="['priority-badge', priorityClass(i.priority)]">{{ i.priority }}</span>
               <span v-if="i.aiPending" class="ai-badge ai-pending">🤖 ...</span>
@@ -631,7 +716,9 @@ function statusClass(s) {
               </span>
             </td>
 
+
             <td><span :class="['status-badge', statusClass(i.status)]">{{ i.status }}</span></td>
+
 
             <td>
               <div v-if="i.vendor" class="vendor-cell">
@@ -641,11 +728,15 @@ function statusClass(s) {
               <span v-else class="unassigned-text">Unassigned</span>
             </td>
 
+
             <td><span class="reports-badge">{{ i.reports.length }}</span></td>
+
 
             <td class="date-cell">{{ i.date }}</td>
 
+
           </tr>
+
 
           <tr v-if="sortedFiltered.length === 0">
             <td colspan="7" class="empty-row">No issues match the selected filters</td>
@@ -654,9 +745,11 @@ function statusClass(s) {
       </table>
     </div>
 
+
     <!-- issue detail modal -->
     <div v-if="showDetail" class="modal-overlay" @click.self="closeDetail">
       <div class="modal modal-lg">
+
 
         <div class="modal-header">
           <div>
@@ -666,7 +759,9 @@ function statusClass(s) {
           <button class="close-btn" @click="closeDetail">✕</button>
         </div>
 
+
         <div class="modal-body">
+
 
           <div class="badges-row">
             <span class="category-badge">{{ selected?.category }}</span>
@@ -674,12 +769,14 @@ function statusClass(s) {
             <span :class="['status-badge', statusClass(selected?.status)]">{{ selected?.status }}</span>
           </div>
 
+
           <div v-if="selected?.status === 'Open' && selected?.aiCategory" class="ai-chip">
             ✨ AI suggested {{ selected?.aiCategory }} · {{ selected?.aiPriority }} priority
           </div>
           <div v-else-if="selected?.status === 'Open' && selected?.aiPending" class="ai-chip ai-pending">
             🤖 AI analysis in progress...
           </div>
+
 
           <!-- AI summary + individual reports -->
           <div class="section">
@@ -699,6 +796,7 @@ function statusClass(s) {
             </div>
           </div>
 
+
           <!-- merge -->
           <div v-if="!['Resolved', 'Rejected'].includes(selected?.status)" class="section merge-section">
             <span class="section-label">Duplicate of another issue?</span>
@@ -711,14 +809,17 @@ function statusClass(s) {
             </div>
           </div>
 
+
           <!-- assign / reschedule -->
           <div v-if="!['Resolved', 'Rejected'].includes(selected?.status)" class="section">
             <span class="section-label">{{ selected?.vendor ? 'Vendor & Schedule' : 'Assign Vendor' }}</span>
+
 
             <label>Category</label>
             <select v-model="detailCategory" class="n-input">
               <option v-for="c in categoryOptions.slice(1)" :key="c" :value="c">{{ c }}</option>
             </select>
+
 
             <div class="vendor-row">
               <div class="vendor-select-wrap">
@@ -731,6 +832,7 @@ function statusClass(s) {
               <button class="btn-outline ai-suggest-btn" @click="suggestVendorAI">🎯 Find Matching Vendor</button>
             </div>
             <p v-if="lastAiNote" class="ai-note">{{ lastAiNote }}</p>
+
 
             <div class="slot-row">
               <div class="slot-field">
@@ -749,10 +851,12 @@ function statusClass(s) {
               </div>
             </div>
 
+
             <div v-if="conflict" class="conflict-warning">
               {{ detailVendor }} is already booked {{ formatSlot(conflict.scheduledStart, conflict.durationMinutes) }}
               for {{ conflict.id }}. Pick a different slot or vendor.
             </div>
+
 
             <button
               class="btn-primary"
@@ -763,13 +867,16 @@ function statusClass(s) {
             </button>
           </div>
 
+
           <!-- complete -->
           <div v-if="selected?.status === 'In Progress'" class="section">
             <span class="section-label">Mark Complete</span>
 
+
             <template v-if="needsPayment">
               <label>Payment amount (₹)</label>
               <input type="number" v-model="completePaymentAmount" class="n-input" placeholder="e.g. 800" min="0" />
+
 
               <label>Pay from</label>
               <select v-model="completeFundName" class="n-input">
@@ -779,11 +886,13 @@ function statusClass(s) {
                 {{ fundLabel(completeFundName) }} only has ₹{{ selectedFundInsufficient.balance }} — ₹{{ selectedFundInsufficient.short }} short of ₹{{ completePaymentAmount }}. You can still proceed, or pick a different fund.
               </p>
 
+
               <p class="helper-text">{{ completingVendor?.name }} is a per-job vendor — record what was paid before closing.</p>
             </template>
             <template v-else>
               <p class="helper-text">{{ completingVendor?.name }} is salaried staff — no per-task payment needed.</p>
             </template>
+
 
             <button
               class="btn-primary btn-complete"
@@ -793,6 +902,7 @@ function statusClass(s) {
               {{ needsPayment ? 'Record Payment & Close' : 'Close Issue' }}
             </button>
           </div>
+
 
           <!-- resolved summary -->
           <div v-if="selected?.status === 'Resolved'" class="section">
@@ -806,6 +916,7 @@ function statusClass(s) {
               <span v-else class="pay-text">No payment applicable</span>
             </div>
           </div>
+
 
           <!-- reject -->
           <div v-if="selected?.status === 'Open' || selected?.status === 'In Progress'" class="section reject-section">
@@ -821,6 +932,7 @@ function statusClass(s) {
             </button>
           </div>
 
+
           <!-- rejected summary -->
           <div v-if="selected?.status === 'Rejected'" class="section">
             <span class="section-label">Rejected</span>
@@ -829,9 +941,11 @@ function statusClass(s) {
             </div>
           </div>
 
+
         </div>
       </div>
     </div>
+
 
     <!-- toast -->
     <transition name="toast-fade">
@@ -841,15 +955,19 @@ function statusClass(s) {
       </div>
     </transition>
 
+
   </div>
 </template>
+
 
 <style scoped>
 .sec-issues {
   max-width: var(--content-max-width);
 }
 
+
 .page-header { margin-bottom: 20px; }
+
 
 .page-header h2 {
   font-size: var(--font-size-3xl);
@@ -857,11 +975,13 @@ function statusClass(s) {
   letter-spacing: -0.4px;
 }
 
+
 .page-sub {
   font-size: var(--font-size-sm);
   color: var(--color-text-muted);
   margin-top: 4px;
 }
+
 
 /* toolbar */
 .toolbar {
@@ -871,12 +991,14 @@ function statusClass(s) {
   margin-bottom: 16px;
 }
 
+
 .toolbar-row {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
 }
+
 
 .search-input {
   height: 42px;
@@ -891,7 +1013,9 @@ function statusClass(s) {
   transition: border-color var(--transition-fast);
 }
 
+
 .search-input:focus { border-color: var(--c-600); }
+
 
 .status-pill-group {
   display: flex;
@@ -902,6 +1026,7 @@ function statusClass(s) {
   padding: 4px;
 }
 
+
 .status-pill {
   padding: 7px 12px;
   border-radius: var(--radius-sm);
@@ -911,7 +1036,9 @@ function statusClass(s) {
   transition: all var(--transition-fast);
 }
 
+
 .status-pill.active { background: var(--c-800); color: #fff; }
+
 
 .right-filters {
   display: flex;
@@ -919,6 +1046,7 @@ function statusClass(s) {
   margin-left: auto;
   flex-wrap: wrap;
 }
+
 
 .filter-select {
   height: 36px;
@@ -933,6 +1061,7 @@ function statusClass(s) {
   cursor: pointer;
 }
 
+
 /* table */
 .table-wrap {
   background: var(--color-surface);
@@ -942,13 +1071,16 @@ function statusClass(s) {
   box-shadow: var(--shadow-sm);
 }
 
+
 .issues-table {
   width: 100%;
   border-collapse: collapse;
   font-size: var(--font-size-sm);
 }
 
+
 .issues-table thead tr { border-bottom: 1px solid var(--color-border); }
+
 
 .issues-table th {
   padding: 12px 20px;
@@ -962,16 +1094,20 @@ function statusClass(s) {
   white-space: nowrap;
 }
 
+
 .issues-table td {
   padding: 14px 20px;
   border-bottom: 1px solid var(--color-border);
   vertical-align: middle;
 }
 
+
 .issues-table tbody tr:last-child td { border-bottom: none; }
+
 
 .issue-row { cursor: pointer; transition: background var(--transition-fast); }
 .issue-row:hover { background: var(--color-surface-muted); }
+
 
 .issue-title {
   display: block;
@@ -979,12 +1115,14 @@ function statusClass(s) {
   color: var(--color-text-primary);
 }
 
+
 .issue-meta {
   display: block;
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
   margin-top: 2px;
 }
+
 
 .category-badge {
   display: inline-block;
@@ -997,6 +1135,7 @@ function statusClass(s) {
   border: 1px solid var(--color-border);
 }
 
+
 .priority-badge, .status-badge {
   padding: 3px 10px;
   border-radius: var(--radius-pill);
@@ -1004,9 +1143,11 @@ function statusClass(s) {
   font-weight: 700;
 }
 
+
 .pri-high   { background: var(--color-danger-bg);  color: var(--color-danger-text);  }
 .pri-medium { background: var(--color-warning-bg); color: var(--color-warning-text); }
 .pri-low    { background: var(--color-success-bg); color: var(--color-success-text); }
+
 
 .ai-badge {
   display: block;
@@ -1017,27 +1158,34 @@ function statusClass(s) {
   white-space: nowrap;
 }
 
+
 .ai-badge.ai-disagrees {
   color: var(--color-danger-text);
 }
 
+
 .ai-pending {
   animation: ai-pending-pulse 1.2s ease-in-out infinite;
 }
+
 
 @keyframes ai-pending-pulse {
   0%, 100% { opacity: 0.5; }
   50% { opacity: 1; }
 }
 
+
 .status-open     { background: var(--color-info-bg);    color: var(--color-info-text);    }
 .status-progress { background: var(--color-warning-bg); color: var(--color-warning-text); }
 .status-resolved { background: var(--color-success-bg); color: var(--color-success-text); }
 .status-rejected { background: var(--color-danger-bg);  color: var(--color-danger-text);  }
 
+
 .vendor-cell { display: flex; flex-direction: column; gap: 2px; }
 
+
 .vendor-name { font-weight: 700; color: var(--color-text-primary); }
+
 
 .slot-text {
   font-size: var(--font-size-xs);
@@ -1045,11 +1193,13 @@ function statusClass(s) {
   color: var(--color-text-muted);
 }
 
+
 .unassigned-text {
   font-size: var(--font-size-sm);
   color: var(--color-text-muted);
   font-style: italic;
 }
+
 
 .reports-badge {
   display: inline-flex;
@@ -1066,7 +1216,9 @@ function statusClass(s) {
   color: var(--color-text-secondary);
 }
 
+
 .date-cell { color: var(--color-text-muted); white-space: nowrap; }
+
 
 .empty-row {
   text-align: center;
@@ -1074,6 +1226,7 @@ function statusClass(s) {
   padding: 40px;
   font-size: var(--font-size-md);
 }
+
 
 /* modal */
 .modal-overlay {
@@ -1087,6 +1240,7 @@ function statusClass(s) {
   padding: 20px;
 }
 
+
 .modal {
   background: var(--color-surface);
   border-radius: var(--radius-xl);
@@ -1095,12 +1249,14 @@ function statusClass(s) {
   box-shadow: var(--shadow-lg);
 }
 
+
 .modal-lg {
   max-width: 560px;
   max-height: 88vh;
   display: flex;
   flex-direction: column;
 }
+
 
 .modal-header {
   display: flex;
@@ -1111,7 +1267,9 @@ function statusClass(s) {
   flex-shrink: 0;
 }
 
+
 .modal-header h3 { font-size: var(--font-size-xl); font-weight: 700; }
+
 
 .modal-sub {
   display: block;
@@ -1119,6 +1277,7 @@ function statusClass(s) {
   color: var(--color-text-muted);
   margin-top: 3px;
 }
+
 
 .close-btn {
   width: 32px;
@@ -1133,7 +1292,9 @@ function statusClass(s) {
   transition: background var(--transition-fast);
 }
 
+
 .close-btn:hover { background: var(--color-border); }
+
 
 .modal-body {
   padding: 20px 24px 26px;
@@ -1143,7 +1304,9 @@ function statusClass(s) {
   gap: 18px;
 }
 
+
 .badges-row { display: flex; gap: 8px; flex-wrap: wrap; }
+
 
 .ai-chip {
   align-self: flex-start;
@@ -1155,10 +1318,12 @@ function statusClass(s) {
   font-weight: 700;
 }
 
+
 .section {
   padding-top: 16px;
   border-top: 1px solid var(--color-border);
 }
+
 
 .section-label {
   display: block;
@@ -1170,6 +1335,7 @@ function statusClass(s) {
   margin-bottom: 10px;
 }
 
+
 .ai-summary {
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
@@ -1178,11 +1344,13 @@ function statusClass(s) {
   margin-bottom: 12px;
 }
 
+
 .reports-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
+
 
 .report-card {
   background: var(--color-surface-soft);
@@ -1191,6 +1359,7 @@ function statusClass(s) {
   padding: 10px 12px;
 }
 
+
 .report-head {
   display: flex;
   justify-content: space-between;
@@ -1198,22 +1367,26 @@ function statusClass(s) {
   margin-bottom: 4px;
 }
 
+
 .report-resident {
   font-size: var(--font-size-xs);
   font-weight: 700;
   color: var(--color-text-primary);
 }
 
+
 .report-date {
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
 }
+
 
 .report-desc {
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
   line-height: 1.5;
 }
+
 
 .resident-priority-tag {
   display: inline-block;

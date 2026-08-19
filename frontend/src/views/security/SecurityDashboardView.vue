@@ -171,12 +171,14 @@ async function verify() {
   try {
     const res = await api.patch('/visitors/verify', { pass_code: code })
     const visitor = res.data.visitor
-    // Backend's verify endpoint succeeds for checked_in visitors too
-    // (multi-entry passes don't fail on status), so we can't rely on
-    // outcome:'valid' alone — check status ourselves before showing
-    // the generic "Valid Pass" / Check In screen.
+    // Backend now reports checked_in/checked_out status ahead of any
+    // revoked/expired check, so this always reflects the visitor's real
+    // current state — e.g. still shows "already checked in" even if a
+    // resident revoked the pass after the visitor entered.
     if (visitor.status === 'checked_in') {
       verifyResult.value = { outcome: 'already_in', visitor }
+    } else if (visitor.status === 'checked_out') {
+      verifyResult.value = { outcome: 'already_used', visitor }
     } else {
       verifyResult.value = { outcome: 'valid', visitor }
     }
@@ -184,17 +186,14 @@ async function verify() {
     const allKnown = [...todaysVisitors.value, ...insideVisitors.value]
     const match = allKnown.find(v => v.pass_code === code)
 
-    // NOTE: the old 'checked_out' -> 'already_used' branch was removed.
-    // _is_usable() on the backend doesn't fail on status alone, so a
-    // checked_out pass never lands here by itself — this branch only
-    // ever fired when the pass was ALSO expired/revoked, and because it
-    // was checked first it masked the real reason (expired) behind a
-    // misleading "single-use" message. is_expired is now the only
-    // failure reason we report here.
+    // Reaching here means the pass isn't checked_in/checked_out AND isn't
+    // usable — i.e. it's genuinely not valid (expired or revoked). We
+    // don't try to tell those two apart for security; is_expired already
+    // collapses both into one flag on the backend.
     if (!match) {
       verifyResult.value = { outcome: 'not_found' }
     } else if (match.is_expired) {
-      verifyResult.value = { outcome: 'expired', visitor: match }
+      verifyResult.value = { outcome: 'not_valid', visitor: match }
     } else {
       verifyResult.value = { outcome: 'not_found' }
     }
@@ -348,10 +347,10 @@ async function sendForApproval() {
           </div>
         </template>
 
-        <template v-else-if="verifyResult.outcome === 'expired'">
+        <template v-else-if="verifyResult.outcome === 'not_valid'">
           <div class="verify-modal-icon error">✕</div>
-          <h3 class="verify-modal-title">Pass Expired</h3>
-          <p class="verify-modal-sub">This code expired {{ formatTime(verifyResult.visitor.expires_at) }}. Ask the resident to reissue it, or log the visitor for a fresh approval.</p>
+          <h3 class="verify-modal-title">Pass Not Valid</h3>
+          <p class="verify-modal-sub">This pass is not valid. Ask the resident to reissue it, or log the visitor for a fresh approval.</p>
           <div class="verify-modal-actions">
             <button class="verify-modal-close" @click="closeVerifyModal">Close</button>
             <button class="approve-modal-btn" @click="openUnexpectedForm(verifyResult.visitor.name)">Log unexpected visitor</button>
@@ -366,6 +365,13 @@ async function sendForApproval() {
             <button class="verify-modal-close" @click="closeVerifyModal">Close</button>
             <button class="reject-modal-btn" @click="checkOut(verifyResult.visitor); closeVerifyModal()">Check Out Now</button>
           </div>
+        </template>
+
+        <template v-else-if="verifyResult.outcome === 'already_used'">
+          <div class="verify-modal-icon error">✕</div>
+          <h3 class="verify-modal-title">Pass Already Used</h3>
+          <p class="verify-modal-sub">{{ verifyResult.visitor.name }} already checked out at {{ formatTime(verifyResult.visitor.check_out_time) }}. This code is single-use — ask the resident for a new one.</p>
+          <button class="verify-modal-close" @click="closeVerifyModal">Close</button>
         </template>
 
         <template v-else>

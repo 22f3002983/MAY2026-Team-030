@@ -82,6 +82,7 @@ def resident_summary():
         } if latest_notice else None,
         'recent_complaints': [{
             'id':          r.id,
+            'title': r.issue.title if r.issue else None,
             'description': r.description,
             'category':    r.issue.category if r.issue else None,
             'status':      r.issue.status if r.issue else None,

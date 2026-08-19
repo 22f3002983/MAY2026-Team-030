@@ -218,8 +218,10 @@ const roleData = computed(() => {
         { label: 'Latest Notice', value: s.latest_notice?.title || 'No notices', sub: s.latest_notice ? `${trimDay(s.latest_notice.date)}, ${s.latest_notice.time}` : '', icon: '🔔', tint: '#49769F' },
       ],
       feed: s.recent_complaints.map(c => ({
+        id: c.id,
         tag: c.id.slice(-3).toUpperCase(),
-        title: c.description,
+        title: c.title || c.description,
+        description: c.description,
         meta: `${(c.category || '').charAt(0).toUpperCase()}${(c.category || '').slice(1)} · ${formatShortDate(c.created_at)}`,
         status: issueStatusLabel(c.status),
         statusClass: issueStatusClass(c.status),

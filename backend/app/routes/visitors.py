@@ -345,16 +345,15 @@ def verify_visitor():
     if not visitor:
         return jsonify({'error': 'Invalid or expired pass code'}), 404
 
-    if not _is_usable(visitor):
-        return jsonify({'error': 'Invalid or expired pass code'}), 404
+    # Status takes priority over revoked/expired: a visitor who's already
+    # checked in (or already checked out) needs that surfaced regardless
+    # of whether their pass has since been revoked or timed out.
+    # Otherwise a resident revoking mid-visit would hide the "check them
+    # out" shortcut behind a generic "not valid" message, even though
+    # the visitor is still on the property.
+    if visitor.status not in ('checked_in', 'checked_out') and not _is_usable(visitor):
+        return jsonify({'error': 'This pass is not valid'}), 404
 
-    # Deliberately still 200 here even if visitor.status == 'checked_in' —
-    # _is_usable() only cares about revoked/expired, not workflow status,
-    # so re-scanning someone already inside is a valid "verify" (their pass
-    # itself is still good). The frontend is responsible for reading
-    # visitor.status and showing an "already checked in" state instead of
-    # treating this as a fresh check-in; check_in() below is the actual
-    # backstop that prevents a duplicate check-in from being recorded.
     return jsonify({
         'message': 'Pass code verified',
         'visitor': visitor_to_security_dict(visitor),
@@ -371,15 +370,14 @@ def check_in(visitor_id):
 
     visitor = Visitor.query.get_or_404(visitor_id)
 
-    if not _is_usable(visitor):
-        return jsonify({'error': 'Invalid or expired pass code'}), 400
-
-    # ADDED — _is_usable() doesn't look at status, so without this a
-    # second check-in on someone already inside would silently overwrite
-    # their original check_in_time with no error and no trace of the
-    # first entry.
+    # ADDED — check status before usability: a checked-in visitor whose
+    # pass gets revoked mid-visit should still be reported as "already
+    # checked in", not bounced with a generic "not valid" error.
     if visitor.status == 'checked_in':
         return jsonify({'error': f'{visitor.name} is already checked in'}), 400
+
+    if not _is_usable(visitor):
+        return jsonify({'error': 'This pass is not valid'}), 400
 
     visitor.status        = 'checked_in'
     visitor.id_verified   = True

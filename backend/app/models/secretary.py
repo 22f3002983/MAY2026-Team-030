@@ -10,6 +10,7 @@ class Secretary(db.Model):
     term_start = db.Column(db.Date,    nullable=True)
     term_end   = db.Column(db.Date,    nullable=True)
     is_active  = db.Column(db.Boolean, default=True)
+    telegram_chat_id = db.Column(db.String(64), nullable=True)
     created_at = db.Column(db.DateTime, default=__import__('datetime').datetime.utcnow)
 
     def __repr__(self):

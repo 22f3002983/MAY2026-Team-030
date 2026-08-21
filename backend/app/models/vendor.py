@@ -14,7 +14,7 @@ class Vendor(db.Model):
 
     is_salaried  = db.Column(db.Boolean, default=False)
     salary       = db.Column(db.Numeric(10, 2), nullable=True)
-
+    telegram_chat_id = db.Column(db.String(64), nullable=True)
     issues       = db.relationship('CommunityIssue', backref='vendor', lazy=True)
 
     def __repr__(self):

@@ -1,5 +1,12 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
+import api from '../../api/axios' // adjust path if this view lives elsewhere
+import { useAuthStore } from '../../stores/auth' // adjust path if needed
+
+const auth = useAuthStore()
+const currentResident = computed(() => ({
+  flat: auth.user?.flat_number || '',
+}))
 
 /* ---------------------------------------------------------------
    Home Services — PERSONAL channel.
@@ -8,60 +15,113 @@ import { ref, computed, watch } from 'vue'
    inside their own flat, tracks it, and pays the vendor from here.
 --------------------------------------------------------------- */
 
-const currentResident = { name: 'Ravi Kumar', flat: 'A-402' }
-
 const categoryOptions = ['Plumbing', 'Electrical', 'Carpentry', 'Cleaning', 'Other']
 
-// Society-empanelled vendors available for personal, in-flat jobs.
-// (Salaried common-area staff like security/gardening never appear here —
-// residents don't book them individually.)
-const vendors = [
-  { name: 'Kishore Plumbing', category: 'Plumbing' },
-  { name: 'Raju Electricals', category: 'Electrical' },
-  { name: 'Suresh Carpentry', category: 'Carpentry' },
-  { name: 'Clean Society',    category: 'Cleaning' },
-  { name: 'Handy Fix Co.',    category: 'Other' },
-]
+// backend uses profession words, frontend uses problem-type words — these
+// are NOT interchangeable via simple casing, need an explicit map both ways
+const CATEGORY_TO_BACKEND = {
+  Plumbing: 'plumber', Electrical: 'electrician', Carpentry: 'carpenter',
+  Cleaning: 'cleaner', Other: 'other',
+}
+const CATEGORY_TO_FRONTEND = {
+  plumber: 'Plumbing', electrician: 'Electrical', carpenter: 'Carpentry',
+  cleaner: 'Cleaning', other: 'Other',
+}
 
 const estimatedMinutesByCategory = {
   Plumbing: 60, Electrical: 45, Carpentry: 90, Cleaning: 45, Other: 60,
 }
 
+function capitalize(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s }
+
 function formatMinutes(mins) {
+  if (!mins) return '—'
   if (mins < 60) return `${mins} min`
   const h = Math.floor(mins / 60)
   const m = mins % 60
   return m === 0 ? `${h} hr` : `${h} hr ${m} min`
 }
 
-function vendorsForCategory(cat) {
-  return vendors.filter(v => v.category === cat)
+function formatDate(iso) {
+  if (!iso) return ''
+  const d = new Date(iso + 'T00:00:00')
+  if (isNaN(d)) return iso
+  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
-// mock data - replace with API in Sprint 1
-const requests = ref([
-  {
-    id: 'HSR-3001', category: 'Plumbing',
-    desc: 'Leaking tap in the bathroom, needs a washer replacement',
-    vendor: 'Kishore Plumbing', date: '2026-07-24', time: '11:00', duration: '1 hr',
-    status: 'Scheduled', paymentStatus: null, paymentAmount: null,
-    createdOn: '20 Jul', rating: null,
-  },
-  {
-    id: 'HSR-2998', category: 'Electrical',
-    desc: 'Switchboard in the bedroom sparked once, want it checked before it happens again',
-    vendor: 'Raju Electricals', date: '2026-07-10', time: '16:00', duration: '45 min',
-    status: 'Completed', paymentStatus: 'paid', paymentAmount: 450,
-    createdOn: '09 Jul', rating: 5,
-  },
-  {
-    id: 'HSR-2990', category: 'Carpentry',
-    desc: 'Main door hinge loose, needs tightening or replacement',
-    vendor: 'Suresh Carpentry', date: '2026-07-04', time: '10:00', duration: '1 hr 30 min',
-    status: 'Cancelled', paymentStatus: null, paymentAmount: null,
-    createdOn: '03 Jul', rating: null,
-  },
-])
+// backend returns "HH:MM:SS" (str() of a Time column); <input type="time">
+// and our own display both want "HH:MM"
+function trimSeconds(t) {
+  return t ? t.slice(0, 5) : ''
+}
+
+/* ---------------- Vendors ---------------- */
+// society-empanelled vendors available for personal, in-flat jobs. Filtering
+// to VALID service categories naturally excludes salaried common-area staff
+// (security/gardener/pest_control aren't service-request categories).
+
+const vendors = ref([])
+
+async function fetchVendors() {
+  try {
+    const res = await api.get('/vendors', { params: { status: 'active' } })
+    const serviceCategories = new Set(Object.keys(CATEGORY_TO_FRONTEND))
+    vendors.value = (res.data.vendors || [])
+      .filter(v => serviceCategories.has(v.category))
+      .map(v => ({ id: v.id, name: v.name, category: v.category }))
+  } catch (err) {
+    console.error('Failed to load vendors', err)
+  }
+}
+
+function vendorsForCategory(frontendCat) {
+  const backendCat = CATEGORY_TO_BACKEND[frontendCat]
+  return vendors.value.filter(v => v.category === backendCat)
+}
+
+/* ---------------- Requests ---------------- */
+
+const requests = ref([])
+const loading = ref(true)
+const loadError = ref('')
+
+function mapRequest(r) {
+  return {
+    id: r.id,
+    category: CATEGORY_TO_FRONTEND[r.category] || capitalize(r.category),
+    desc: r.description,
+    vendor: r.vendor_name,
+    vendorId: r.vendor_id,
+    date: r.scheduled_date,
+    time: trimSeconds(r.scheduled_time),
+    durationMinutes: r.duration_minutes,
+    duration: formatMinutes(r.duration_minutes),
+    status: capitalize(r.status),
+    paymentStatus: r.payment_status,
+    paymentAmount: r.payment_amount,
+    createdOn: r.created_at ? formatDate(r.created_at.slice(0, 10)) : '',
+    rating: r.rating,
+  }
+}
+
+async function fetchRequests() {
+  loading.value = true
+  loadError.value = ''
+  try {
+    const res = await api.get('/service-requests')
+    requests.value = (res.data.requests || []).map(mapRequest)
+  } catch (err) {
+    loadError.value = err.response?.data?.error || 'Failed to load requests'
+    console.error('Failed to load service requests', err)
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(async () => {
+  await fetchVendors()
+  await fetchRequests()
+})
 
 const statusFilters = ['All', 'Scheduled', 'Completed', 'Cancelled']
 const filterStatus = ref('All')
@@ -88,10 +148,24 @@ function categoryIcon(cat) {
   return map[cat] || '🛠️'
 }
 
+/* ---------------- Toast ---------------- */
+
+const toastVisible = ref(false)
+const toastText = ref('')
+let toastTimer = null
+
+function showToast(text) {
+  toastText.value = text
+  toastVisible.value = true
+  clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => { toastVisible.value = false }, 2600)
+}
+
 /* ---------------- Raise / reschedule modal ---------------- */
 
 const showRaise = ref(false)
 const editingId = ref(null)
+const submitting = ref(false)
 
 const formCategory = ref('Plumbing')
 const formDesc     = ref('')
@@ -100,40 +174,36 @@ const formDate     = ref('')
 const formTime     = ref('')
 const aiNote       = ref('')
 
-// duration is no longer something the resident picks — it's always
-// derived from whichever category is active (AI-detected or chosen)
 const estimatedDuration = computed(() => formatMinutes(estimatedMinutesByCategory[formCategory.value] || 60))
 
-// AI category suggestion, based on what the resident types — same idea
-// as the community-issue raise flow, applied here to route to the right vendor
 const aiSuggestedCategory = ref(null)
 const aiThinking = ref(false)
-let aiTimer = null
 
-watch(formDesc, (val) => {
-  if (!showRaise.value) return
-  if (!val.trim()) { aiSuggestedCategory.value = null; return }
-  aiThinking.value = true
-  clearTimeout(aiTimer)
-  aiTimer = setTimeout(() => {
-    const lower = val.toLowerCase()
-    if (lower.includes('water') || lower.includes('pipe') || lower.includes('tap') || lower.includes('leak'))
-      aiSuggestedCategory.value = 'Plumbing'
-    else if (lower.includes('light') || lower.includes('electric') || lower.includes('power') || lower.includes('switch') || lower.includes('spark'))
-      aiSuggestedCategory.value = 'Electrical'
-    else if (lower.includes('clean') || lower.includes('garbage') || lower.includes('dust'))
-      aiSuggestedCategory.value = 'Cleaning'
-    else if (lower.includes('door') || lower.includes('wood') || lower.includes('cabinet') || lower.includes('hinge'))
-      aiSuggestedCategory.value = 'Carpentry'
-    else
-      aiSuggestedCategory.value = null
-    aiThinking.value = false
-  }, 500)
+// a suggestion is only valid for the text it was generated from — clear it
+// (but don't re-call the AI) once the resident edits the description, so an
+// outdated badge doesn't linger from partial/earlier wording
+watch(formDesc, () => {
+  aiSuggestedCategory.value = null
 })
 
-// shared logic: only clear the vendor if it's no longer valid for the
-// (new) category — previously this cleared unconditionally, which meant
-// clicking the AI suggestion silently wiped a vendor you'd already picked
+// triggered explicitly by a button rather than as-you-type: avoids calling
+// the model on half-typed descriptions, and avoids the suggestion flickering
+// as someone pauses mid-sentence to think
+async function suggestCategory() {
+  const val = formDesc.value.trim()
+  if (!val) return
+  aiThinking.value = true
+  aiSuggestedCategory.value = null
+  try {
+    const res = await api.post('/service-requests/suggest-category', { description: val })
+    aiSuggestedCategory.value = res.data.category ? CATEGORY_TO_FRONTEND[res.data.category] : null
+  } catch (err) {
+    console.error('Failed to get AI category suggestion', err)
+  } finally {
+    aiThinking.value = false
+  }
+}
+
 function syncVendorToCategory() {
   const stillValid = vendorsForCategory(formCategory.value).some(v => v.name === formVendor.value)
   if (!stillValid) formVendor.value = ''
@@ -180,8 +250,6 @@ function closeRaise() {
 function autoAssignVendor() {
   const candidates = vendorsForCategory(formCategory.value)
   if (!candidates.length) return
-  // pick the vendor with the fewest currently scheduled jobs — same idea as
-  // the secretary's AI-suggest, just scoped to this resident's own requests
   const loadOf = (v) => requests.value.filter(r => r.vendor === v.name && r.status === 'Scheduled').length
   const best = [...candidates].sort((a, b) => loadOf(a) - loadOf(b))[0]
   formVendor.value = best.name
@@ -192,41 +260,56 @@ const canSubmit = computed(() =>
   formCategory.value && formDesc.value.trim() && formVendor.value && formDate.value && formTime.value
 )
 
-function submitRequest() {
-  if (!canSubmit.value) return
+async function submitRequest() {
+  if (!canSubmit.value || submitting.value) return
+  const vendorObj = vendors.value.find(v => v.name === formVendor.value)
+  if (!vendorObj) return
 
-  if (editingId.value) {
-    const r = requests.value.find(x => x.id === editingId.value)
-    r.category = formCategory.value
-    r.desc = formDesc.value.trim()
-    r.vendor = formVendor.value
-    r.date = formDate.value
-    r.time = formTime.value
-    r.duration = estimatedDuration.value
-    showToast(`${r.id} updated — new slot booked`)
-  } else {
-    const id = `HSR-${3000 + requests.value.length + 2}`
-    requests.value.unshift({
-      id, category: formCategory.value, desc: formDesc.value.trim(),
-      vendor: formVendor.value, date: formDate.value, time: formTime.value, duration: estimatedDuration.value,
-      status: 'Scheduled', paymentStatus: null, paymentAmount: null,
-      createdOn: 'Today', rating: null,
-    })
-    showToast(`${id} booked with ${formVendor.value}`)
+  submitting.value = true
+  try {
+    if (editingId.value) {
+      await api.patch(`/service-requests/${editingId.value}`, {
+        category: CATEGORY_TO_BACKEND[formCategory.value],
+        description: formDesc.value.trim(),
+        vendor_id: vendorObj.id,
+        scheduled_date: formDate.value,
+        scheduled_time: formTime.value,
+      })
+      showToast(`Request updated — new slot booked`)
+    } else {
+      const res = await api.post('/service-requests', {
+        category: CATEGORY_TO_BACKEND[formCategory.value],
+        description: formDesc.value.trim(),
+        vendor_id: vendorObj.id,
+        scheduled_date: formDate.value,
+        scheduled_time: formTime.value,
+      })
+      showToast(`Booked with ${formVendor.value}`)
+    }
+    await fetchRequests()
+    closeRaise()
+  } catch (err) {
+    showToast(err.response?.data?.error || 'Failed to save request')
+  } finally {
+    submitting.value = false
   }
-
-  closeRaise()
 }
 
-function cancelRequest(r) {
-  r.status = 'Cancelled'
-  showToast(`${r.id} cancelled`)
+async function cancelRequest(r) {
+  try {
+    await api.patch(`/service-requests/${r.id}/cancel`)
+    showToast(`Request cancelled`)
+    await fetchRequests()
+  } catch (err) {
+    showToast(err.response?.data?.error || 'Failed to cancel request')
+  }
 }
 
 /* ---------------- Complete + pay ---------------- */
 
 const showComplete = ref(null)
 const payAmount = ref('')
+const paying = ref(false)
 
 function openComplete(r) {
   showComplete.value = r
@@ -237,39 +320,31 @@ function closeComplete() {
   showComplete.value = null
 }
 
-function confirmPay() {
+async function confirmPay() {
   const r = showComplete.value
-  if (!payAmount.value || !r) return
-  r.status = 'Completed'
-  r.paymentStatus = 'paid'
-  r.paymentAmount = Number(payAmount.value)
-  showToast(`${r.id} marked complete — ₹${payAmount.value} paid to ${r.vendor}`)
-  closeComplete()
+  if (!payAmount.value || !r || paying.value) return
+
+  paying.value = true
+  try {
+    const res = await api.patch(`/service-requests/${r.id}/complete`, { amount: Number(payAmount.value) })
+    showToast(res.data.message)
+    await fetchRequests()
+    closeComplete()
+  } catch (err) {
+    showToast(err.response?.data?.error || 'Failed to record payment')
+  } finally {
+    paying.value = false
+  }
 }
 
-function rate(r, stars) {
-  r.rating = stars
-  showToast(`Thanks for rating ${r.vendor}`)
-}
-
-/* ---------------- Toast ---------------- */
-
-const toastVisible = ref(false)
-const toastText = ref('')
-let toastTimer = null
-
-function showToast(text) {
-  toastText.value = text
-  toastVisible.value = true
-  clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => { toastVisible.value = false }, 2600)
-}
-
-function formatDate(iso) {
-  if (!iso) return ''
-  const d = new Date(iso + 'T00:00:00')
-  if (isNaN(d)) return iso
-  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+async function rate(r, stars) {
+  try {
+    const res = await api.patch(`/service-requests/${r.id}/rate`, { rating: stars })
+    showToast(res.data.message)
+    await fetchRequests()
+  } catch (err) {
+    showToast(err.response?.data?.error || 'Failed to submit rating')
+  }
 }
 </script>
 
@@ -296,15 +371,21 @@ function formatDate(iso) {
       </button>
     </div>
 
+    <!-- load state (ADDED — loading/loadError were tracked but never shown) -->
+    <p v-if="loadError" class="error-msg">{{ loadError }}</p>
+    <div v-if="loading" class="empty-state">
+      <p>Loading your requests...</p>
+    </div>
+
     <!-- request cards -->
-    <div class="requests-list">
+    <div v-else class="requests-list">
       <div v-for="r in filtered" :key="r.id" class="request-card">
 
         <button class="card-header" @click="toggle(r.id)">
           <div class="cat-icon">{{ categoryIcon(r.category) }}</div>
           <div class="card-summary">
             <div class="card-top">
-              <span class="request-id">{{ r.id }}</span>
+              <span class="request-id">{{ r.vendor }}</span>
               <span class="request-cat">· {{ r.category }}</span>
             </div>
             <p class="request-desc">{{ r.desc }}</p>
@@ -324,10 +405,10 @@ function formatDate(iso) {
               <span class="detail-label">{{ r.status === 'Cancelled' ? 'Was scheduled for' : 'Scheduled for' }}</span>
               <span class="detail-value">{{ formatDate(r.date) }}, {{ r.time }}</span>
             </div>
-            <div class="detail-item">
+            <!-- <div class="detail-item">
               <span class="detail-label">Estimated time</span>
               <span class="detail-value">{{ r.duration || '—' }}</span>
-            </div>
+            </div> -->
             <div class="detail-item">
               <span class="detail-label">Requested on</span>
               <span class="detail-value">{{ r.createdOn }}</span>
@@ -385,7 +466,7 @@ function formatDate(iso) {
         </div>
 
         <div class="modal-body">
-          <div class="two-col">
+          <div class="one-col">
 
             <!-- left: form -->
             <div class="form-col">
@@ -397,6 +478,14 @@ function formatDate(iso) {
                 rows="3"
                 placeholder="e.g. Kitchen tap has been leaking since this morning"
               ></textarea>
+              <button
+                type="button"
+                class="suggest-category-btn"
+                :disabled="!formDesc.trim() || aiThinking"
+                @click="suggestCategory"
+              >
+                {{ aiThinking ? '✦ Thinking...' : '✨ Suggest category' }}
+              </button>
 
               <div class="field-header">
                 <label>Category</label>
@@ -408,17 +497,14 @@ function formatDate(iso) {
                 >
                   ✦ AI suggested: {{ aiSuggestedCategory }}
                 </span>
-                <span v-else-if="aiThinking" class="ai-badge thinking">
-                  ✦ Thinking...
-                </span>
               </div>
               <select v-model="formCategory" class="n-input" @change="onCategoryChange">
                 <option v-for="c in categoryOptions" :key="c" :value="c">{{ categoryIcon(c) }} {{ c }}</option>
               </select>
 
-              <p class="duration-hint">
+              <!-- <p class="duration-hint">
                 ⏱ Estimated time for {{ formCategory }}: <strong>{{ estimatedDuration }}</strong>
-              </p>
+              </p> -->
 
               <div class="vendor-row">
                 <div class="vendor-select-wrap">
@@ -428,7 +514,7 @@ function formatDate(iso) {
                     <option v-for="v in vendorsForCategory(formCategory)" :key="v.name" :value="v.name">{{ v.name }}</option>
                   </select>
                 </div>
-                <button class="btn-outline ai-suggest-btn" @click="autoAssignVendor">✨ Auto-assign</button>
+                <button class="btn-outline ai-suggest-btn" @click="autoAssignVendor">Find Matching Vendor</button>
               </div>
               <p v-if="aiNote" class="ai-note">{{ aiNote }}</p>
 
@@ -443,18 +529,19 @@ function formatDate(iso) {
                 </div>
               </div>
 
-              <button class="btn-primary" :disabled="!canSubmit" @click="submitRequest">
-                {{ editingId ? 'Save New Slot' : 'Book Request' }}
+              <!-- FIXED: disabled during submit + shows progress text, prevents double-submit -->
+              <button class="btn-primary" :disabled="!canSubmit || submitting" @click="submitRequest">
+                {{ submitting ? 'Saving...' : (editingId ? 'Save New Slot' : 'Book Request') }}
               </button>
             </div>
 
             <!-- right: AI helper + resolution times -->
-            <div class="side-panel">
+            <!-- <div class="side-panel">
 
               <div class="ai-panel">
                 <div class="ai-panel-title">✦ How AI helps</div>
                 <p class="ai-panel-text">
-                  As you type, Niwaas reads your description and suggests the most likely category — so your request reaches the right vendor faster, with a realistic time estimate.
+                  Once you've described the issue, tap "Suggest category" and Niwaas reads it to suggest the most likely category — so your request reaches the right vendor faster, with a realistic time estimate.
                 </p>
               </div>
 
@@ -469,7 +556,7 @@ function formatDate(iso) {
                 <p class="resolution-note">Updates automatically based on the category detected from your description.</p>
               </div>
 
-            </div>
+            </div> -->
 
           </div>
         </div>
@@ -492,7 +579,10 @@ function formatDate(iso) {
           <input type="number" v-model="payAmount" class="n-input" placeholder="e.g. 500" min="0" />
           <p class="helper-text">This confirms the job is done and records what you paid {{ showComplete.vendor }} directly.</p>
 
-          <button class="btn-primary" :disabled="!payAmount" @click="confirmPay">Confirm &amp; Close</button>
+          <!-- FIXED: disabled while paying, shows progress text -->
+          <button class="btn-primary" :disabled="!payAmount || paying" @click="confirmPay">
+            {{ paying ? 'Processing...' : 'Confirm & Close' }}
+          </button>
         </div>
       </div>
     </div>
@@ -567,6 +657,12 @@ function formatDate(iso) {
 }
 
 .status-pill.active { background: var(--c-800); color: #fff; }
+
+.error-msg {
+  font-size: var(--font-size-sm);
+  color: var(--color-danger);
+  margin-bottom: 14px;
+}
 
 .requests-list {
   display: flex;
@@ -829,7 +925,25 @@ function formatDate(iso) {
 }
 
 .ai-badge:hover   { background: #C8DEF3; }
-.ai-badge.thinking { opacity: 0.6; cursor: default; }
+
+.suggest-category-btn {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  color: var(--c-800);
+  background: transparent;
+  border: 1.5px solid var(--color-border-soft);
+  padding: 6px 12px;
+  border-radius: var(--radius-pill);
+  margin: 8px 0 14px;
+  transition: all var(--transition-fast);
+}
+
+.suggest-category-btn:hover:not(:disabled) { border-color: var(--c-600); background: #EAF6FB; }
+.suggest-category-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 label {
   display: block;

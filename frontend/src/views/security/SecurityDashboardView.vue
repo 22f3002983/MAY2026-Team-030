@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import MetricCard from '../../components/dashboard/MetricCard.vue'
 import api from '../../api/axios'
+import { digitsOnly, toStoredPhone } from '../../utils/phone'
 
 // CHANGED — was a hardcoded placeholder array; now populated live from
 // GET /api/flats/directory (flat -> primary resident lookup)
@@ -65,7 +66,7 @@ async function refreshAll() {
 const summaryStats = ref({
   visitorsInside:   '—',
   awaitingApproval: '—',
-  preRegistered:    '—',
+  walkinsToday:     '—',
   deliveriesToday:  '—',
 })
 
@@ -75,7 +76,7 @@ async function fetchSummary() {
     summaryStats.value = {
       visitorsInside:   res.data.visitors_inside,
       awaitingApproval: res.data.awaiting_approval,
-      preRegistered:    res.data.pre_registered,
+      walkinsToday:     res.data.walkins_today,
       deliveriesToday:  res.data.deliveries_today,
     }
   } catch (err) {
@@ -104,10 +105,25 @@ onUnmounted(() => {
 
 // ===== computed views =====
 
+// "Approvals" = still waiting on the resident's decision. Approved
+// walk-ins ready for check-in now live in their own "Upcoming" section
+// below, not mixed in here.
 const activeApprovals = computed(() =>
+  todaysVisitors.value.filter(v => v.status === 'awaiting_approval')
+)
+
+// Walk-ins only — approved and ready to check in today, not expired.
+// Pre-registered (non-walk-in) visitors don't belong here.
+// "Today" for a walk-in means created today (see /visitors/today), since
+// walk-ins don't carry a meaningful expected_date of their own.
+// NOTE: no `!v.revoked` check here — visitor_to_security_dict folds
+// revocation into is_expired and doesn't expose a separate `revoked`
+// field on this page, so that check was always a no-op.
+const upcomingWalkins = computed(() =>
   todaysVisitors.value.filter(v =>
-    v.status === 'awaiting_approval' ||
-    (v.visit_type === 'walk_in' && v.status === 'pre_registered' && !v.check_in_time && !v.is_expired)
+    v.visit_type === 'walk_in' &&
+    v.status === 'pre_registered' &&
+    !v.is_expired
   )
 )
 
@@ -124,12 +140,14 @@ const todaysLog = computed(() =>
 const metrics = computed(() => [
   { label: 'Visitors Inside',   value: String(summaryStats.value.visitorsInside),   sub: 'live count',     icon: '✓',  tint: '#4E8EA2' },
   { label: 'Awaiting Approval', value: String(summaryStats.value.awaitingApproval), sub: 'at the gate',    icon: '🛡', tint: '#E0A030' },
-  { label: 'Pre-registered',    value: String(summaryStats.value.preRegistered),    sub: 'expected today', icon: '📅', tint: '#78BDE9' },
+  { label: 'Walk-ins',          value: String(summaryStats.value.walkinsToday),     sub: 'ready today',    icon: '🚶', tint: '#78BDE9' },
   { label: 'Deliveries',        value: String(summaryStats.value.deliveriesToday),  sub: 'today',          icon: '📦', tint: '#49769F' },
 ])
 
+// NOTE: the pre_registered && is_expired branch was dropped — this
+// function is only ever called on todaysLog rows, which are pre-filtered
+// to checked_in/checked_out/rejected, so pre_registered never reaches it.
 function statusLabel(v) {
-  if (v.status === 'pre_registered' && v.is_expired && !v.check_in_time) return 'Expired'
   const map = {
     awaiting_approval: 'Waiting for resident',
     pre_registered:    'Awaiting check-in',
@@ -152,19 +170,30 @@ async function verify() {
 
   try {
     const res = await api.patch('/visitors/verify', { pass_code: code })
-    verifyResult.value = { outcome: 'valid', visitor: res.data.visitor }
+    const visitor = res.data.visitor
+    // Backend now reports checked_in/checked_out status ahead of any
+    // revoked/expired check, so this always reflects the visitor's real
+    // current state — e.g. still shows "already checked in" even if a
+    // resident revoked the pass after the visitor entered.
+    if (visitor.status === 'checked_in') {
+      verifyResult.value = { outcome: 'already_in', visitor }
+    } else if (visitor.status === 'checked_out') {
+      verifyResult.value = { outcome: 'already_used', visitor }
+    } else {
+      verifyResult.value = { outcome: 'valid', visitor }
+    }
   } catch (err) {
     const allKnown = [...todaysVisitors.value, ...insideVisitors.value]
     const match = allKnown.find(v => v.pass_code === code)
 
+    // Reaching here means the pass isn't checked_in/checked_out AND isn't
+    // usable — i.e. it's genuinely not valid (expired or revoked). We
+    // don't try to tell those two apart for security; is_expired already
+    // collapses both into one flag on the backend.
     if (!match) {
       verifyResult.value = { outcome: 'not_found' }
-    } else if (match.status === 'checked_in') {
-      verifyResult.value = { outcome: 'already_in', visitor: match }
-    } else if (match.status === 'checked_out') {
-      verifyResult.value = { outcome: 'already_used', visitor: match }
     } else if (match.is_expired) {
-      verifyResult.value = { outcome: 'expired', visitor: match }
+      verifyResult.value = { outcome: 'not_valid', visitor: match }
     } else {
       verifyResult.value = { outcome: 'not_found' }
     }
@@ -208,7 +237,7 @@ async function rejectAtGate(visitor) {
 // =====================================================================
 const showUnexpectedForm = ref(false)
 const uvName    = ref('')
-const uvPhone   = ref('')
+const uvPhone   = ref('')   // 10 raw digits; +91 prefix is shown separately
 const uvVehicle = ref('')
 const uvFlat    = ref('')
 const uvPurpose = ref('')
@@ -230,6 +259,10 @@ function closeUnexpectedForm() {
   showUnexpectedForm.value = false
 }
 
+function onUvPhoneInput(e) {
+  uvPhone.value = digitsOnly(e.target.value)
+}
+
 async function sendForApproval() {
   uvError.value = ''
   if (!uvName.value.trim()) { uvError.value = 'Visitor name is required'; return }
@@ -237,13 +270,17 @@ async function sendForApproval() {
 
   const residentId = residentIdForFlat(uvFlat.value)
   if (!residentId) { uvError.value = 'No resident on file for that flat'; return }
+  if (uvPhone.value && uvPhone.value.length !== 10) {
+    uvError.value = 'Phone number must be exactly 10 digits'
+    return
+  }
 
   uvSending.value = true
   try {
     const res = await api.post('/visitors/gate-request', {
       name:           uvName.value.trim(),
       resident_id:    residentId,
-      phone:          uvPhone.value.trim() || undefined,
+      phone:          toStoredPhone(uvPhone.value) || undefined,
       vehicle_number: uvVehicle.value.trim() || undefined,
       reason:         uvPurpose.value.trim() || undefined,
     })
@@ -310,10 +347,10 @@ async function sendForApproval() {
           </div>
         </template>
 
-        <template v-else-if="verifyResult.outcome === 'expired'">
+        <template v-else-if="verifyResult.outcome === 'not_valid'">
           <div class="verify-modal-icon error">✕</div>
-          <h3 class="verify-modal-title">Pass Expired</h3>
-          <p class="verify-modal-sub">This code expired {{ formatTime(verifyResult.visitor.expires_at) }}. Ask the resident to reissue it, or log the visitor for a fresh approval.</p>
+          <h3 class="verify-modal-title">Pass Not Valid</h3>
+          <p class="verify-modal-sub">This pass is not valid. Ask the resident to reissue it, or log the visitor for a fresh approval.</p>
           <div class="verify-modal-actions">
             <button class="verify-modal-close" @click="closeVerifyModal">Close</button>
             <button class="approve-modal-btn" @click="openUnexpectedForm(verifyResult.visitor.name)">Log unexpected visitor</button>
@@ -391,7 +428,18 @@ async function sendForApproval() {
         </div>
         <div class="uv-field">
           <label>Phone <span class="optional">(optional)</span></label>
-          <input v-model="uvPhone" type="text" class="pass-input uv-input" placeholder="98xxx xxxxx" />
+          <div class="phone-input-group">
+            <span class="phone-prefix">+91</span>
+            <input
+              :value="uvPhone"
+              @input="onUvPhoneInput"
+              type="text"
+              inputmode="numeric"
+              maxlength="10"
+              class="pass-input uv-input phone-input"
+              placeholder="98XXXXXXXX"
+            />
+          </div>
         </div>
         <div class="uv-field">
           <label>Vehicle number <span class="optional">(optional)</span></label>
@@ -444,17 +492,35 @@ async function sendForApproval() {
           <span v-if="visitor.pass_code" class="visitor-code">{{ visitor.pass_code }}</span>
           <span class="visitor-time">{{ formatTime(visitor.created_at) }}</span>
         </div>
-        <span :class="['queue-badge', visitor.status === 'awaiting_approval' ? 'waiting' : 'checked_in']">
-          {{ visitor.status === 'awaiting_approval' ? 'Waiting for resident' : 'Approved — check in' }}
-        </span>
-
-        <!-- resident already approved (status = pre_registered): security checks in -->
-        <div v-if="visitor.status === 'pre_registered'" class="queue-actions">
-          <button class="approve-btn" @click="checkIn(visitor)" title="Check in">✓</button>
-        </div>
-        <!-- still pending — nothing for security to do but wait -->
-        <div v-else class="queue-actions">
+        <span class="queue-badge waiting">Waiting for resident</span>
+        <div class="queue-actions">
           <span class="visitor-meta">Waiting on resident's app</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- upcoming: approved walk-ins, ready to check in today. Whole card
+         is omitted (not even an empty state) when there's nothing here. -->
+    <div v-if="upcomingWalkins.length > 0" class="queue-card">
+      <div class="queue-header">
+        <span class="queue-title">Upcoming</span>
+        <span class="waiting-badge">{{ upcomingWalkins.length }} walk-in{{ upcomingWalkins.length === 1 ? '' : 's' }}</span>
+      </div>
+
+      <div v-for="visitor in upcomingWalkins" :key="visitor.id" class="queue-row">
+        <div class="visitor-avatar">{{ visitor.name.charAt(0) }}</div>
+        <div class="visitor-info">
+          <span class="visitor-name">{{ visitor.name }}</span>
+          <span class="visitor-meta">{{ visitor.reason || 'Walk-in' }}</span>
+        </div>
+        <div class="visitor-code-block">
+          <span v-if="visitor.pass_code" class="visitor-code">{{ visitor.pass_code }}</span>
+          <span class="visitor-time">Expires {{ formatTime(visitor.expires_at) }}</span>
+        </div>
+        <span class="queue-badge checked_in">Ready to check in</span>
+        <div class="queue-actions">
+          <button class="approve-btn" @click="checkIn(visitor)" title="Check in">✓</button>
+          <button class="reject-btn" @click="rejectAtGate(visitor)" title="Reject">✕</button>
         </div>
       </div>
     </div>
@@ -661,6 +727,21 @@ async function sendForApproval() {
 .uv-field { display: flex; flex-direction: column; gap: 6px; width: 100%; }
 .uv-field label { font-size: var(--font-size-xs); font-weight: 700; color: var(--c-800); }
 .uv-input { width: 100%; font-family: var(--font-family); font-weight: 500; letter-spacing: normal; font-size: var(--font-size-sm); color: var(--color-text-primary); background: var(--color-surface-soft); border: 1.5px solid var(--color-border-soft); }
+
+.phone-input-group { display: flex; align-items: center; gap: 8px; }
+.phone-prefix {
+  height: 46px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  border: 1.5px solid var(--color-border-soft);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-soft);
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.phone-input { flex: 1; }
 .optional { font-weight: 500; color: var(--color-text-muted); }
 .error-msg { font-size: var(--font-size-xs); color: var(--color-danger); }
 

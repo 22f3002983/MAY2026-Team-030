@@ -14,11 +14,17 @@ const needsInviteCode = ref(false);
 const error = ref("");
 const loading = ref(false);
 
+const telegramBotUsername = import.meta.env.VITE_TELEGRAM_BOT_USERNAME;
+
 const roles = [
   { value: "resident", label: "Resident" },
   { value: "secretary", label: "Secretary" },
   { value: "security", label: "Security" },
 ];
+
+function roleLabel(value) {
+  return roles.find((r) => r.value === value)?.label || value;
+}
 
 async function login() {
   error.value = "";
@@ -38,6 +44,16 @@ async function login() {
 
   try {
     const user = await auth.login(email.value, password.value, inviteCode.value || null);
+
+    // the role buttons are just a UI hint — the backend doesn't check them
+    // at all, so without this a secretary's real credentials would silently
+    // log in even with "Resident" selected. Reject the mismatch explicitly.
+    if (user.role !== selectedRole.value) {
+      await auth.logout(); // a session was already created server-side — undo it
+      error.value = `Select the correct role and try again.`;
+      loading.value = false;
+      return;
+    }
 
     if (user.role === "security") {
       router.push("/gate/dashboard");
@@ -136,6 +152,15 @@ async function login() {
             class="n-input"
             style="text-transform: uppercase"
           />
+          <a
+            v-if="telegramBotUsername"
+            :href="`https://t.me/${telegramBotUsername}`"
+            target="_blank"
+            rel="noopener"
+            class="telegram-link-btn"
+          >
+            Get invite code via Telegram
+          </a>
         </template>
 
         <!-- error message -->
@@ -344,6 +369,25 @@ label {
   font-size: var(--font-size-sm);
   color: var(--color-danger);
   margin-bottom: 10px;
+}
+
+.telegram-link-btn {
+  display: block;
+  text-align: center;
+  height: 42px;
+  line-height: 42px;
+  border-radius: var(--radius-md);
+  border: 1.5px solid var(--color-border-soft);
+  background: var(--color-surface-soft);
+  color: var(--c-800);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  margin-bottom: 14px;
+  transition: border-color var(--transition-fast);
+}
+
+.telegram-link-btn:hover {
+  border-color: var(--c-600);
 }
 
 .btn-primary {

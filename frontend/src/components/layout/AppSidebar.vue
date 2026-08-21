@@ -32,6 +32,8 @@ const navItems = computed(() => {
       { label: 'Residents',    icon: '👥', to: '/sec/residents' },
       { label: 'Documents',  icon: '📄', to: '/sec/documents' },
       { label: 'Amenities',  icon: '🏢', to: '/sec/amenities' },
+      { label: 'Funds',  icon: '🪙', to: '/sec/funds' },
+      { label: 'Electricity Bills', icon: '⚡', to: '/sec/electricity' },
       { label: 'Vendors',      icon: '🔧', to: '/sec/vendors' },
       { label: 'Vendor Jobs', icon: '📋', to: '/sec/vendors/jobs' },
     ]

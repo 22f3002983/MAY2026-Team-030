@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import api from '../../api/axios'
+import { digitsOnly, formatPhoneDisplay } from '../../utils/phone'
 
 const searchQuery = ref('')
 const showAddModal = ref(false)
@@ -16,7 +17,6 @@ const newResident = ref({
   tower: '',
   floor: null,
   unit_number: '',
-  flat_number: '',
   phone: '',
   members: 1,
   occupant_type: 'owner',
@@ -25,6 +25,33 @@ const newResident = ref({
 const formError = ref('')
 
 const residents = ref([])
+
+// ── Tower dropdown: real towers from the backend + an "add new tower"
+// option that reveals a free-text input ────────────────────────────
+const towerList   = ref([])
+const NEW_TOWER   = '__new__'
+const newTowerName = ref('')
+
+async function fetchTowers() {
+  try {
+    const res = await api.get('/flats/blocks')
+    towerList.value = res.data.blocks
+  } catch (err) {
+    console.error('Failed to load tower list', err)
+  }
+}
+
+// ── Phone: fixed +91 prefix, digits-only, max 10 ────────────────────
+const phoneDigits = ref('')
+
+function onPhoneInput(e) {
+  phoneDigits.value = digitsOnly(e.target.value)
+}
+
+// ── Unit number: digits only, max 3 ──────────────────────────────────
+function onUnitNumberInput(e) {
+  newResident.value.unit_number = digitsOnly(e.target.value).slice(0, 3)
+}
 
 async function fetchResidents() {
   loading.value = true
@@ -38,7 +65,25 @@ async function fetchResidents() {
   }
 }
 
-onMounted(fetchResidents)
+const resolvedTower = computed(() =>
+  newResident.value.tower === NEW_TOWER
+    ? newTowerName.value.trim().toUpperCase()
+    : newResident.value.tower.toUpperCase()
+)
+
+function onNewTowerNameInput(e) {
+  newTowerName.value = e.target.value.toUpperCase()
+}
+
+const computedFlatNumber = computed(() => {
+  if (!resolvedTower.value || !newResident.value.unit_number) return ''
+  return `${resolvedTower.value}-${newResident.value.unit_number}`
+})
+
+onMounted(() => {
+  fetchResidents()
+  fetchTowers()
+})
 
 const filtered = computed(() => {
   if (!searchQuery.value) return residents.value
@@ -61,16 +106,27 @@ function openDetail(resident) {
 async function addResident() {
   formError.value = ''
 
-  if (!newResident.value.name || !newResident.value.email || !newResident.value.password ||
-      !newResident.value.flat_number || !newResident.value.phone) {
-    formError.value = 'Name, email, password, flat number and phone are required'
+  if (!newResident.value.name || !newResident.value.email || !newResident.value.password) {
+    formError.value = 'Name, email and password are required'
+    return
+  }
+  if (phoneDigits.value.length !== 10) {
+    formError.value = 'Phone number must be exactly 10 digits'
     return
   }
   if (newResident.value.password.length < 6) {
     formError.value = 'Password must be at least 6 characters'
     return
   }
-  if (!newResident.value.tower || newResident.value.floor === null || !newResident.value.unit_number) {
+  if (newResident.value.floor === null || newResident.value.floor < 0 || newResident.value.floor > 9) {
+    formError.value = 'Floor must be a single digit between 0 and 9'
+    return
+  }
+  if (newResident.value.unit_number.length !== 3) {
+    formError.value = 'Unit number must be exactly 3 digits'
+    return
+  }
+  if (!resolvedTower.value || newResident.value.floor === null || !newResident.value.unit_number) {
     formError.value = 'Tower, floor and unit number are required to register a new flat'
     return
   }
@@ -82,18 +138,21 @@ async function addResident() {
       password:       newResident.value.password,
       role:           'resident',
       name:           newResident.value.name,
-      phone:          newResident.value.phone,
-      tower:          newResident.value.tower,
+      phone:          '+91' + phoneDigits.value,
+      tower:          resolvedTower.value,
       floor:          newResident.value.floor,
       unit_number:    newResident.value.unit_number,
-      flat_number:    newResident.value.flat_number,
+      flat_number:    computedFlatNumber.value,
       occupant_type:  newResident.value.occupant_type,
       household_size: newResident.value.members,
     })
 
     await fetchResidents()
+    await fetchTowers() // pick up a brand-new tower if one was just added
 
-    newResident.value = { name: '', email: '', password: '', tower: '', floor: null, unit_number: '', flat_number: '', phone: '', members: 1, occupant_type: 'owner' }
+    newResident.value = { name: '', email: '', password: '', tower: '', floor: null, unit_number: '', phone: '', members: 1, occupant_type: 'owner' }
+    newTowerName.value = ''
+    phoneDigits.value = ''
     showAddModal.value = false
 
     alert('Resident added. They can log in with the email/password you set, and change their password afterward.')
@@ -102,7 +161,8 @@ async function addResident() {
   } finally {
     submitting.value = false
   }
-  // ADDED
+}
+
 const regenerating = ref(false)
 const regenerateError = ref('')
 
@@ -126,25 +186,24 @@ async function regenerateInvite(resident) {
   }
 }
 
-
-
-}
-
 function duesClass(status) {
   if (status === 'paid')    return 'dues-paid'
   if (status === 'overdue') return 'dues-overdue'
+  if (status === 'none')    return 'dues-none'
   return 'dues-pending'
 }
 
-// ADDED — derive a display status from pending_due since the backend
+// derive a display status from pending_due/has_dues since the backend
 // doesn't return a separate dues_status field
 function duesDisplay(resident) {
   if (resident.pending_due === null || resident.pending_due === undefined) return '—'
+  if (!resident.has_dues) return 'No dues yet'
   if (resident.pending_due <= 0) return 'Paid'
   return `₹${resident.pending_due.toLocaleString('en-IN')}`
 }
 function duesStatusOf(resident) {
   if (resident.pending_due === null || resident.pending_due === undefined) return 'pending'
+  if (!resident.has_dues) return 'none'
   if (resident.pending_due <= 0) return 'paid'
   return 'pending'
 }
@@ -177,7 +236,7 @@ function duesStatusOf(resident) {
             <th>Flat</th>
             <th>Phone</th>
             <th>Members</th>
-            <th>Dues</th>
+            <th>Outstanding Dues</th>
             <th>Type</th>
             <th>Status</th>
           </tr>
@@ -201,7 +260,7 @@ function duesStatusOf(resident) {
               </div>
             </td>
             <td class="flat-cell">{{ r.flat_number || '—' }}</td>
-            <td class="phone-cell">{{ r.phone }}</td>
+            <td class="phone-cell">{{ formatPhoneDisplay(r.phone) || '—' }}</td>
             <td class="members-cell">{{ r.household_size || '—' }}</td>
             <td>
               <span :class="['dues-badge', duesClass(duesStatusOf(r))]">
@@ -213,7 +272,7 @@ function duesStatusOf(resident) {
             </td>
             <td>
               <span :class="['onboard-badge', r.is_onboarded ? 'active' : 'pending']">
-                {{ r.is_onboarded ? 'Active' : 'Pending' }}
+                {{ r.is_onboarded ? 'Active' : 'Pending onboarding' }}
               </span>
             </td>
           </tr>
@@ -240,7 +299,7 @@ function duesStatusOf(resident) {
           <div class="detail-grid">
             <div class="detail-row">
               <span class="d-label">Phone</span>
-              <span class="d-value">{{ selectedResident?.phone }}</span>
+              <span class="d-value">{{ formatPhoneDisplay(selectedResident?.phone) || '—' }}</span>
             </div>
             <div class="detail-row">
               <span class="d-label">Flat</span>
@@ -305,29 +364,54 @@ function duesStatusOf(resident) {
           <label>Password *</label>
           <input v-model="newResident.password" type="text" placeholder="Starting password (min 6 chars)" class="n-input" />
 
-          <div class="two-col">
+         <div class="two-col">
             <div>
               <label>Tower *</label>
-              <input v-model="newResident.tower" type="text" placeholder="e.g. A" class="n-input" />
+              <select v-model="newResident.tower" class="n-input n-select">
+                <option value="" disabled>Select tower</option>
+                <option v-for="t in towerList" :key="t" :value="t">Tower {{ t }}</option>
+                <option :value="NEW_TOWER">+ Add new tower</option>
+              </select>
+              <input
+                v-if="newResident.tower === NEW_TOWER"
+                :value="newTowerName"
+                @input="onNewTowerNameInput"
+                type="text"
+                placeholder="New tower name, e.g. E"
+                class="n-input"
+                style="margin-top: 8px; text-transform: uppercase;"
+              />
             </div>
             <div>
               <label>Floor *</label>
-              <input v-model.number="newResident.floor" type="number" min="0" class="n-input" />
+              <input v-model.number="newResident.floor" type="number" min="0" max="9" class="n-input" 
+              @input="newResident.floor = newResident.floor !== null ? Math.max(0, Math.min(9, Math.trunc(newResident.floor))) : null" />
             </div>
           </div>
           <div class="two-col">
             <div>
               <label>Unit number *</label>
-              <input v-model="newResident.unit_number" type="text" placeholder="e.g. 402" class="n-input" />
+              <input :value="newResident.unit_number" @input="onUnitNumberInput" type="text" inputmode="numeric" maxlength="3" placeholder="e.g. 402" class="n-input" />
             </div>
             <div>
-              <label>Flat number *</label>
-              <input v-model="newResident.flat_number" type="text" placeholder="e.g. A-402" class="n-input" />
+              <label>Flat number</label>
+              <input :value="computedFlatNumber" type="text" disabled class="n-input" />
             </div>
           </div>
 
           <label>Phone *</label>
-          <input v-model="newResident.phone" type="text" placeholder="+91 98XXX XXXXX" class="n-input" />
+          <div class="phone-input-group">
+            <span class="phone-prefix">+91</span>
+            <input
+              :value="phoneDigits"
+              @input="onPhoneInput"
+              type="text"
+              inputmode="numeric"
+              maxlength="10"
+              placeholder="98XXXXXXXX"
+              class="n-input phone-input"
+            />
+          </div>
 
           <div class="two-col">
             <div>
@@ -365,6 +449,29 @@ function duesStatusOf(resident) {
 <style scoped>
 .sec-residents {
   max-width: var(--content-max-width);
+}
+
+.phone-input-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.phone-prefix {
+  height: 42px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  border: 1.5px solid var(--color-border-soft);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-soft);
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.phone-input {
+  flex: 1;
 }
 
 .page-header {
@@ -436,7 +543,7 @@ function duesStatusOf(resident) {
 
 .residents-table th {
   padding: 12px 20px;
-  text-align: left;
+  text-align: center;
   font-size: var(--font-size-xs);
   font-weight: 700;
   color: var(--color-text-muted);
@@ -450,6 +557,7 @@ function duesStatusOf(resident) {
   padding: 14px 20px;
   border-bottom: 1px solid var(--color-border);
   vertical-align: middle;
+  text-align: center;
 }
 
 .residents-table tbody tr:last-child td { border-bottom: none; }
@@ -499,6 +607,7 @@ function duesStatusOf(resident) {
 .dues-paid    { color: var(--color-success-text); }
 .dues-pending { color: var(--color-warning-text); }
 .dues-overdue { color: var(--color-danger-text);  }
+.dues-none    { color: var(--color-text-secondary); }
 
 .type-badge {
   font-size: var(--font-size-xs);

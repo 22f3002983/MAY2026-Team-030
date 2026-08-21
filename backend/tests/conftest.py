@@ -35,16 +35,21 @@ def register(test_client, email, password, role, name, phone='9000000000', **ext
     return test_client.post('/api/auth/register', json=payload)
 
 
-def login(test_client, email, password):
-    return test_client.post('/api/auth/login', json={'email': email, 'password': password})
+def login(test_client, email, password, invite_code=None):
+    payload = {'email': email, 'password': password}
+    if invite_code:
+        payload['invite_code'] = invite_code
+    return test_client.post('/api/auth/login', json=payload)
 
 
 @pytest.fixture()
 def resident_client(app):
     """An authenticated client logged in as a resident."""
     c = app.test_client()
-    register(c, 'resident@test.com', 'Passw0rd1', 'resident', 'Res Ident', phone='9000000001')
-    login(c, 'resident@test.com', 'Passw0rd1')
+    r = register(c, 'resident@test.com', 'Passw0rd1', 'resident', 'Res Ident', phone='9000000001',
+                 flat_number='A-101', tower='A', floor=1, unit_number='101')
+    invite_code = (r.get_json() or {}).get('invite_code')
+    login(c, 'resident@test.com', 'Passw0rd1', invite_code=invite_code)
     return c
 
 
@@ -52,8 +57,10 @@ def resident_client(app):
 def resident_client_2(app):
     """A second, distinct resident — for multi-reporter scenarios."""
     c = app.test_client()
-    register(c, 'resident2@test.com', 'Passw0rd1', 'resident', 'Res Ident Two', phone='9000000004')
-    login(c, 'resident2@test.com', 'Passw0rd1')
+    r = register(c, 'resident2@test.com', 'Passw0rd1', 'resident', 'Res Ident Two', phone='9000000004',
+                 flat_number='A-102', tower='A', floor=1, unit_number='102')
+    invite_code = (r.get_json() or {}).get('invite_code')
+    login(c, 'resident2@test.com', 'Passw0rd1', invite_code=invite_code)
     return c
 
 

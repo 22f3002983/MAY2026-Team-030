@@ -47,7 +47,11 @@ def _is_timed_out(v):
     return bool(v.expires_at and datetime.utcnow() > v.expires_at)
 
 def _is_usable(v):
-    """A pass security can act on: not revoked, not timed out."""
+    """A pass security can act on: not revoked, not timed out.
+    Deliberately status-agnostic — a checked_in visitor's pass is still
+    "usable" (e.g. multi-entry re-verification); status-specific rules
+    for individual actions (checkin/checkout) are enforced at the route
+    level instead, not here."""
     return not v.revoked and not _is_timed_out(v)
 
 def visitor_to_security_dict(v):
@@ -120,6 +124,11 @@ def visitors_today():
         db.or_(
             Visitor.expected_date == today,
             db.and_(Visitor.check_in_time >= day_start, Visitor.check_in_time <= day_end),
+            # walk-ins have no meaningful "expected" date of their own — for
+            # them, "today" means created today, not expected_date == today
+            # (a resident's self-service walk-in doesn't set expected_date
+            # at all, so without this it wouldn't show up here pre-checkin)
+            db.and_(Visitor.visit_type == 'walk_in', Visitor.created_at >= day_start, Visitor.created_at <= day_end),
         )
     ).order_by(Visitor.created_at.desc()).all()
     serialize = visitor_to_security_dict if current_user.role == 'security' else visitor_to_dict
@@ -336,8 +345,14 @@ def verify_visitor():
     if not visitor:
         return jsonify({'error': 'Invalid or expired pass code'}), 404
 
-    if not _is_usable(visitor):
-        return jsonify({'error': 'Invalid or expired pass code'}), 404
+    # Status takes priority over revoked/expired: a visitor who's already
+    # checked in (or already checked out) needs that surfaced regardless
+    # of whether their pass has since been revoked or timed out.
+    # Otherwise a resident revoking mid-visit would hide the "check them
+    # out" shortcut behind a generic "not valid" message, even though
+    # the visitor is still on the property.
+    if visitor.status not in ('checked_in', 'checked_out') and not _is_usable(visitor):
+        return jsonify({'error': 'This pass is not valid'}), 404
 
     return jsonify({
         'message': 'Pass code verified',
@@ -355,8 +370,14 @@ def check_in(visitor_id):
 
     visitor = Visitor.query.get_or_404(visitor_id)
 
+    # ADDED — check status before usability: a checked-in visitor whose
+    # pass gets revoked mid-visit should still be reported as "already
+    # checked in", not bounced with a generic "not valid" error.
+    if visitor.status == 'checked_in':
+        return jsonify({'error': f'{visitor.name} is already checked in'}), 400
+
     if not _is_usable(visitor):
-        return jsonify({'error': 'Invalid or expired pass code'}), 400
+        return jsonify({'error': 'This pass is not valid'}), 400
 
     visitor.status        = 'checked_in'
     visitor.id_verified   = True
@@ -379,6 +400,13 @@ def check_out(visitor_id):
         return jsonify({'error': 'Only security can check out visitors'}), 403
 
     visitor = Visitor.query.get_or_404(visitor_id)
+
+    # ADDED — previously had no status check at all, so a visitor who was
+    # never checked in (or already checked out) could still be "checked
+    # out" again, overwriting check_out_time and leaving no error trail.
+    if visitor.status != 'checked_in':
+        return jsonify({'error': f'{visitor.name} is not currently checked in'}), 400
+
     visitor.status         = 'checked_out'
     visitor.check_out_time = datetime.utcnow()
 
@@ -422,8 +450,16 @@ def revoke_visitor(visitor_id):
     visitor = Visitor.query.get_or_404(visitor_id)
     if visitor.resident_id != current_user.resident.id:
         return jsonify({'error': 'Not your visitor'}), 403
-    if visitor.status != 'pre_registered':
-        return jsonify({'error': 'Only an upcoming pass can be revoked'}), 400
+    if visitor.revoked:
+        return jsonify({'error': 'This pass has already been revoked'}), 400
+    if _is_timed_out(visitor):
+        return jsonify({'error': 'This pass has already expired'}), 400
+    # any non-terminal status (pre_registered / checked_in / checked_out)
+    # can be revoked as long as it's not already expired or revoked —
+    # matches activePasses on the frontend, so anything shown there is
+    # always revocable
+    if visitor.status not in ('pre_registered', 'checked_in', 'checked_out'):
+        return jsonify({'error': 'This pass can no longer be revoked'}), 400
 
     visitor.revoked    = True
     visitor.revoked_at = datetime.utcnow()

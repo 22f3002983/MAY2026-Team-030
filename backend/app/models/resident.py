@@ -13,6 +13,11 @@ class Resident(db.Model):
     invite_code         = db.Column(db.String(20),  nullable=True)
     invite_code_expiry  = db.Column(db.DateTime,    nullable=True)
     is_onboarded        = db.Column(db.Boolean, default=False)
+    vehicle1_name        = db.Column(db.String(100), nullable=True)
+    telegram_chat_id = db.Column(db.String(64), nullable=True)
+    vehicle1_number      = db.Column(db.String(20),  nullable=True)
+    vehicle2_name        = db.Column(db.String(100), nullable=True)
+    vehicle2_number      = db.Column(db.String(20),  nullable=True)
     onboarded_at        = db.Column(db.DateTime, nullable=True)
     created_at          = db.Column(db.DateTime, default=__import__('datetime').datetime.utcnow)
 

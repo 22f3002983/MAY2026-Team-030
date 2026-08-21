@@ -1,18 +1,25 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import api from '../../api/axios' // adjust path if this view lives elsewhere
+
 
 /* ---------------- Filters ---------------- */
 
-const filterStatus   = ref('All')
+
+const filterStatus   = ref('Open')
 const filterCategory = ref('all')
 const filterPriority = ref('all')
 const sortBy         = ref('priority-desc')
 const searchQuery    = ref('')
 
+
 const statusFilters   = ['All', 'Open', 'In Progress', 'Resolved', 'Rejected']
-const categoryOptions = ['all', 'Plumbing', 'Electrical', 'Cleaning', 'Carpentry', 'Security', 'Gardening', 'Other']
+// ADDED: Security, Gardening, Pest Control — matches the expanded
+// CommunityIssue.category enum
+const categoryOptions = ['all', 'Plumbing', 'Electrical', 'Cleaning', 'Carpentry', 'Security', 'Gardening', 'Pest Control', 'Other']
 const priorityOptions = ['all', 'High', 'Medium', 'Low']
 const priorityRank    = { High: 3, Medium: 2, Low: 1 }
+
 
 const durationOptions = [
   { label: '30 mins', minutes: 30 },
@@ -22,22 +29,83 @@ const durationOptions = [
   { label: '3 hr',     minutes: 180 },
 ]
 
+
+/* ---------------- Backend <-> UI mapping ----------------
+   Issue category/priority are just cased differently from the backend
+   ('plumbing' -> 'Plumbing'). 'pest_control' needs its own case since it's
+   two words. Status needs an explicit map because the backend has no
+   'rejected' value — we repurpose 'closed' for it, since CommunityIssue
+   .status only has open/in_progress/resolved/closed. */
+
+
+const STATUS_TO_FRONTEND = { open: 'Open', in_progress: 'In Progress', resolved: 'Resolved', closed: 'Rejected' }
+
+
+function capitalize(s) {
+  if (!s) return s
+  if (s === 'pest_control') return 'Pest Control'
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+
+// reverse of capitalize — used when sending filters/category back to the API
+function toBackendCategory(c) {
+  if (!c) return c
+  return c.toLowerCase().replace(' ', '_')
+}
+
+
+function formatDate(iso) {
+  if (!iso) return ''
+  return new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
+}
+
+
+// the backend returns naive datetime strings with no trailing 'Z'/offset,
+// but they're always UTC instants (we only ever send UTC via toISOString())
+// — mark them explicitly so `new Date(...)` doesn't misread them as local time
+function asUtcIso(s) {
+  if (!s) return s
+  return /[Zz]|[+-]\d\d:\d\d$/.test(s) ? s : s + 'Z'
+}
+
+
+// a vendor's category is the *profession* ('plumber'); an issue's category is
+// the *problem type* ('plumbing') — different enums, so assigning a vendor
+// needs this explicit mapping to find who's actually suited to the job
+const ISSUE_TO_VENDOR_CATEGORY = {
+  Plumbing: 'plumber', Electrical: 'electrician', Carpentry: 'carpenter',
+  Cleaning: 'cleaner', Security: 'security', Gardening: 'gardener',
+  'Pest Control': 'pest_control', Other: 'other',
+}
+
+
 /* ---------------- Vendors ---------------- */
 // engagementType: 'per_job' -> paid per completed task (plumbers, electricians, etc.)
-//                 'salaried' -> fixed monthly salary (security, gardeners), no per-task payment
-const vendors = [
-  { name: 'Kishore Plumbing', category: 'Plumbing',   engagementType: 'per_job' },
-  { name: 'Raju Electricals', category: 'Electrical', engagementType: 'per_job' },
-  { name: 'Suresh Carpentry', category: 'Carpentry',  engagementType: 'per_job' },
-  { name: 'Clean Society',    category: 'Cleaning',   engagementType: 'per_job' },
-  { name: 'OtisCare Lifts',   category: 'Other',      engagementType: 'per_job' },
-  { name: 'Ramesh Yadav',     category: 'Security',   engagementType: 'salaried', salary: 18000 },
-  { name: 'Ganesh Mali',      category: 'Gardening',  engagementType: 'salaried', salary: 12000 },
-]
+//                 'salaried' -> fixed monthly salary, no per-task payment
+const vendors = ref([])
+
+
+async function fetchVendors() {
+  try {
+    const res = await api.get('/vendors', { params: { status: 'active' } })
+    vendors.value = (res.data.vendors || []).map(v => ({
+      id: v.id,
+      name: v.name,
+      category: v.category,
+      engagementType: v.is_salaried ? 'salaried' : 'per_job',
+      salary: v.salary,
+    }))
+  } catch (err) {
+    console.error('Failed to load vendors', err)
+  }
+}
+
 
 function vendorByName(name) {
-  return vendors.find(v => v.name === name) || null
+  return vendors.value.find(v => v.name === name) || null
 }
+
 
 // Mock AI time estimates per category - replace with real model output in Sprint 1
 const estimatedMinutesByCategory = {
@@ -47,8 +115,52 @@ const estimatedMinutesByCategory = {
   Cleaning: 45,
   Security: 30,
   Gardening: 60,
+  'Pest Control': 60,
   Other: 90,
 }
+
+
+/* ---------------- Residents (flat lookup for the reports list) ---------------- */
+
+
+const residentFlats = ref({})
+
+
+async function fetchResidentFlats() {
+  try {
+    const res = await api.get('/auth/residents')
+    const map = {}
+    for (const r of (res.data.residents || [])) map[r.id] = r.flat_number || '—'
+    residentFlats.value = map
+  } catch (err) {
+    console.error('Failed to load resident flats', err)
+  }
+}
+
+
+/* ---------------- Funds (paying non-salaried vendors on completion) ----------------
+   Same "Operating first, unlock other funds only if Operating can't cover
+   it" logic as the Society Funds page's manual transaction form. */
+
+
+const funds = ref([])
+
+
+async function fetchFunds() {
+  try {
+    const res = await api.get('/funds')
+    funds.value = res.data.funds || []
+  } catch (err) {
+    console.error('Failed to load funds', err)
+  }
+}
+
+
+function fundLabel(name) {
+  const map = { operating: 'Operating Fund', sinking: 'Sinking Fund', contingency: 'Contingency Fund' }
+  return map[name] || name
+}
+
 
 /* ---------------- Issues (community / common-area only) ---------------- */
 // Personal, inside-the-flat complaints never appear here — they live in the
@@ -56,97 +168,105 @@ const estimatedMinutesByCategory = {
 // Multiple residents can report the same issue, so each issue carries a
 // `reports` array instead of a single resident.
 
-const issues = ref([
-  {
-    id: 'ISS-2039',
-    title: 'Corridor light flickering',
-    location: '4th floor corridor, Tower A',
-    category: 'Electrical',
-    aiCategory: 'Electrical',
-    priority: 'Medium',
-    aiPriority: 'Medium',
-    status: 'Open',
-    vendor: null, scheduledStart: null, durationMinutes: null, paymentStatus: null, paymentAmount: null,
-    date: '27 Jun',
-    aiSummary: 'Residents report a flickering light on the 4th floor corridor landing in Tower A.',
-    reports: [
-      { resident: 'Ravi Kumar', flat: 'A-402', desc: 'Corridor light flickering on the 4th floor landing', date: '27 Jun', residentPriority: 'High' },
-    ],
-  },
-  {
-    id: 'ISS-2046',
-    title: 'Lift lobby light flickering',
-    location: '4th floor corridor, Tower A',
-    category: 'Electrical',
-    aiCategory: 'Electrical',
-    priority: 'Medium',
-    aiPriority: 'Medium',
-    status: 'Open',
-    vendor: null, scheduledStart: null, durationMinutes: null, paymentStatus: null, paymentAmount: null,
-    date: '29 Jun',
-    aiSummary: 'A second, separate report of a flickering light near the 4th floor lift lobby in Tower A — likely the same fault as ISS-2039.',
-    reports: [
-      { resident: 'Meena Sharma', flat: 'A-405', desc: 'Lift lobby light on the 4th floor keeps flickering, happened twice this week', date: '29 Jun', residentPriority: 'Medium' },
-    ],
-  },
-  {
-    id: 'ISS-2050',
-    title: 'Terrace water tank overflowing',
-    location: 'Terrace, Tower B',
-    category: 'Plumbing',
-    aiCategory: 'Plumbing',
-    priority: 'High',
-    aiPriority: 'High',
-    status: 'Open',
-    vendor: null, scheduledStart: null, durationMinutes: null, paymentStatus: null, paymentAmount: null,
-    date: '30 Jun',
-    aiSummary: 'The terrace water tank in Tower B is overflowing, wasting water and posing a slip risk below.',
-    reports: [
-      { resident: 'Karan Mehta', flat: 'B-304', desc: 'Water overflowing from the terrace tank, wasting a lot of water', date: '30 Jun', residentPriority: 'High' },
-    ],
-  },
-  {
-    id: 'ISS-2028',
-    title: 'Lift grinding noise',
-    location: 'Lift 2, Tower A (between floors 3–5)',
-    category: 'Other',
-    aiCategory: 'Other',
-    priority: 'Medium',
-    aiPriority: 'Medium',
-    status: 'In Progress',
-    vendor: 'OtisCare Lifts', scheduledStart: '2026-06-22T14:00', durationMinutes: 120,
-    paymentStatus: 'pending', paymentAmount: null,
-    date: '22 Jun',
-    aiSummary: 'Lift 2 in Tower A makes a grinding noise while travelling between the 3rd and 5th floors.',
-    reports: [
-      { resident: 'Sana Iqbal', flat: 'A-108', desc: 'Lift making grinding noise between floors 3 and 5', date: '22 Jun', residentPriority: 'High' },
-    ],
-  },
-  {
-    id: 'ISS-2031',
-    title: 'Garbage not collected',
-    location: 'B-wing basement',
-    category: 'Cleaning',
-    aiCategory: 'Cleaning',
-    priority: 'Low',
-    aiPriority: 'Low',
-    status: 'Resolved',
-    vendor: 'Clean Society', scheduledStart: '2026-06-24T09:00', durationMinutes: 60,
-    paymentStatus: 'paid', paymentAmount: 800,
-    date: '24 Jun',
-    aiSummary: 'Garbage was not collected from the B-wing basement collection point.',
-    reports: [
-      { resident: 'Meena Sharma', flat: 'B-201', desc: 'Garbage not collected from B-wing basement', date: '24 Jun', residentPriority: 'Low' },
-    ],
-  },
-])
 
+// CommunityIssue has no payment or rejection-reason columns yet, so both are
+// kept client-side only, keyed by issue id — they reset on page reload.
+const localPayments     = ref({}) // issueId -> { status, amount, fund }
+const rejectionReasons  = ref({}) // issueId -> reason text
+
+
+const issues = ref([])
+const loading = ref(true)
+const loadError = ref('')
+
+
+function mapIssue(i) {
+  const vendorObj = vendors.value.find(v => v.id === i.vendor_id)
+  const payment = localPayments.value[i.id]
+  return {
+    id: i.id,
+    title: i.title,
+    location: i.location || '—',
+    category: capitalize(i.category),
+    // raw (nullable) — no fallback to category/priority, so the UI can show
+    // a pending placeholder instead of mislabeling the set value as "AI"
+    aiCategory: i.ai_suggested_category ? capitalize(i.ai_suggested_category) : null,
+    aiPriority: i.ai_suggested_priority ? capitalize(i.ai_suggested_priority) : null,
+    aiPending: !i.ai_suggested_category,
+    priority: capitalize(i.priority),
+    status: STATUS_TO_FRONTEND[i.status] || i.status,
+    vendor: vendorObj ? vendorObj.name : null,
+    scheduledStart: asUtcIso(i.vendor_start_time),
+    durationMinutes: (i.vendor_start_time && i.vendor_end_time)
+      ? Math.round((new Date(asUtcIso(i.vendor_end_time)) - new Date(asUtcIso(i.vendor_start_time))) / 60000)
+      : null,
+    paymentStatus: payment?.status ?? null,
+    paymentAmount: payment?.amount ?? null,
+    paymentFund: payment?.fund ?? null,
+    date: formatDate(i.created_at),
+    aiSummary: i.ai_suggested_description || i.description,
+    rejectionReason: rejectionReasons.value[i.id] || null,
+    reports: (i.reporters || []).map(r => ({
+      resident: r.resident_name || 'Resident',
+      flat: residentFlats.value[r.resident_id] || '—',
+      desc: r.description,
+      date: formatDate(r.created_at),
+      residentPriority: null,
+    })),
+  }
+}
+
+
+async function fetchIssues(silent = false) {
+  if (!silent) loading.value = true
+  loadError.value = ''
+  try {
+    const res = await api.get('/complaints')
+    issues.value = (res.data.complaints || []).map(mapIssue)
+  } catch (err) {
+    loadError.value = err.response?.data?.error || 'Failed to load issues'
+    console.error('Failed to load issues', err)
+  } finally {
+    if (!silent) loading.value = false
+  }
+}
+
+
+// picks up category/priority once the backend's background AI thread
+// finishes, without the secretary needing to manually refresh
+let aiRefreshInterval = null
+
+
+onMounted(async () => {
+  await fetchVendors()
+  await fetchResidentFlats()
+  await fetchFunds()
+  await fetchIssues()
+
+
+  aiRefreshInterval = setInterval(() => fetchIssues(true), 10000)
+})
+
+
+onUnmounted(() => {
+  if (aiRefreshInterval) clearInterval(aiRefreshInterval)
+})
+
+
+// FIX: this computed was missing entirely — filtered/openCount/unassignedCount/
+// mergeableIssues all depend on it, causing a ReferenceError and blank screen.
 const visibleIssues = computed(() => issues.value.filter(i => i.status !== 'Merged'))
+
 
 const filtered = computed(() => {
   const q = searchQuery.value.toLowerCase()
   return visibleIssues.value.filter(i => {
-    const matchesStatus   = filterStatus.value === 'All' || i.status === filterStatus.value
+    // "Open" pill also includes "In Progress" — secretary wants to see
+    // everything still active, not just brand-new unassigned issues.
+    const matchesStatus = filterStatus.value === 'All'
+      || (filterStatus.value === 'Open'
+            ? ['Open', 'In Progress'].includes(i.status)
+            : i.status === filterStatus.value)
     const matchesCategory = filterCategory.value === 'all' || i.category === filterCategory.value
     const matchesPriority = filterPriority.value === 'all' || i.priority === filterPriority.value
     const matchesSearch   = !q
@@ -158,24 +278,33 @@ const filtered = computed(() => {
   })
 })
 
-const openCount       = computed(() => visibleIssues.value.filter(i => i.status === 'Open').length)
+
+const openCount       = computed(() => visibleIssues.value.filter(i => ['Open', 'In Progress'].includes(i.status)).length)
 const unassignedCount = computed(() => visibleIssues.value.filter(i => !i.vendor && i.status !== 'Resolved').length)
+
 
 const sortedFiltered = computed(() => {
   const arr = [...filtered.value]
   switch (sortBy.value) {
-    case 'priority-asc':  return arr.sort((a, b) => priorityRank[a.priority] - priorityRank[b.priority])
-    case 'priority-desc': return arr.sort((a, b) => priorityRank[b.priority] - priorityRank[a.priority])
-    case 'reports-asc':   return arr.sort((a, b) => a.reports.length - b.reports.length)
-    case 'reports-desc':  return arr.sort((a, b) => b.reports.length - a.reports.length)
-    default:              return arr
+    case 'priority-asc':     return arr.sort((a, b) => priorityRank[a.priority] - priorityRank[b.priority])
+    case 'priority-desc':    return arr.sort((a, b) => priorityRank[b.priority] - priorityRank[a.priority])
+    // AI-assessed urgency, independent of the priority the resident picked —
+    // this is what actually catches under-reported urgency (see aiPriority)
+    case 'ai-priority-desc': return arr.sort((a, b) => priorityRank[b.aiPriority] - priorityRank[a.aiPriority])
+    case 'ai-priority-asc':  return arr.sort((a, b) => priorityRank[a.aiPriority] - priorityRank[b.aiPriority])
+    case 'reports-asc':      return arr.sort((a, b) => a.reports.length - b.reports.length)
+    case 'reports-desc':     return arr.sort((a, b) => b.reports.length - a.reports.length)
+    default:                 return arr
   }
 })
 
+
 /* ---------------- Detail modal ---------------- */
+
 
 const showDetail = ref(false)
 const selected   = ref(null)
+
 
 const detailCategory = ref('')
 const detailVendor   = ref('')
@@ -183,15 +312,19 @@ const detailDate     = ref('')
 const detailTime     = ref('')
 const detailDuration = ref(60)
 const completePaymentAmount = ref('')
+const completeFundName      = ref('operating')
 const mergeTarget    = ref('')
 const lastAiNote      = ref('')
 const rejectReason    = ref('')
 
+
 /* ---------------- Toast ---------------- */
+
 
 const toastVisible = ref(false)
 const toastText    = ref('')
 let toastTimer = null
+
 
 function showToast(text) {
   toastText.value = text
@@ -199,6 +332,7 @@ function showToast(text) {
   clearTimeout(toastTimer)
   toastTimer = setTimeout(() => { toastVisible.value = false }, 2600)
 }
+
 
 function openDetail(issue) {
   selected.value = issue
@@ -214,47 +348,60 @@ function openDetail(issue) {
   }
   detailDuration.value = issue.durationMinutes || 60
   completePaymentAmount.value = ''
+  completeFundName.value = 'operating'
   mergeTarget.value = ''
   lastAiNote.value = ''
   rejectReason.value = ''
   showDetail.value = true
 }
 
+
 function closeDetail() {
   showDetail.value = false
   selected.value = null
 }
 
+
 // If the category changes, drop a vendor that no longer matches it
 watch(detailCategory, () => {
-  if (detailVendor.value && vendorByName(detailVendor.value)?.category !== detailCategory.value) {
+  if (detailVendor.value && vendorByName(detailVendor.value)?.category !== ISSUE_TO_VENDOR_CATEGORY[detailCategory.value]) {
     detailVendor.value = ''
   }
 })
 
-const vendorsForCategory = computed(() => vendors.filter(v => v.category === detailCategory.value))
+
+const vendorsForCategory = computed(() =>
+  vendors.value.filter(v => v.category === ISSUE_TO_VENDOR_CATEGORY[detailCategory.value])
+)
+
 
 function suggestVendorAI() {
   const candidates = vendorsForCategory.value
-  if (!candidates.length) return
+  if (!candidates.length) {
+    lastAiNote.value = `No vendors available for ${detailCategory.value}. Please add a vendor in the Vendor Directory first.`
+    return
+  }
   const loadOf = (v) => issues.value.filter(i =>
     i.vendor === v.name && i.status === 'In Progress' && i.id !== selected.value?.id
   ).length
   const best = [...candidates].sort((a, b) => loadOf(a) - loadOf(b))[0]
   detailVendor.value = best.name
   detailDuration.value = estimatedMinutesByCategory[detailCategory.value] || 60
-  lastAiNote.value = `AI suggested ${best.name} · ~${durationOptions.find(d => d.minutes === detailDuration.value)?.label || detailDuration.value + ' min'}`
+  lastAiNote.value = `Matched ${best.name} (lowest current workload) · ~${durationOptions.find(d => d.minutes === detailDuration.value)?.label || detailDuration.value + ' min'}`
 }
+
 
 function slotRange(startIso, minutes) {
   const start = new Date(startIso)
   return { start, end: new Date(start.getTime() + minutes * 60000) }
 }
 
+
 const proposedSlot = computed(() => {
   if (!detailDate.value || !detailTime.value) return null
   return slotRange(`${detailDate.value}T${detailTime.value}`, detailDuration.value)
 })
+
 
 const conflict = computed(() => {
   if (!detailVendor.value || !proposedSlot.value) return null
@@ -269,6 +416,7 @@ const conflict = computed(() => {
   }) || null
 })
 
+
 function formatSlot(iso, minutes) {
   if (!iso) return ''
   const d = new Date(iso)
@@ -278,81 +426,182 @@ function formatSlot(iso, minutes) {
   return `${datePart}, ${timePart} · ${durLabel}`
 }
 
-function confirmAssign() {
+
+async function confirmAssign() {
   if (!detailVendor.value || !proposedSlot.value || conflict.value) return
   const issue = selected.value
+  const vendorObj = vendorByName(detailVendor.value)
+  if (!vendorObj) return
+
+
   const wasUnassigned = !issue.vendor
+  const { start, end } = proposedSlot.value
 
-  issue.category         = detailCategory.value
-  issue.vendor           = detailVendor.value
-  issue.scheduledStart   = `${detailDate.value}T${detailTime.value}`
-  issue.durationMinutes  = detailDuration.value
-  if (issue.status === 'Open') issue.status = 'In Progress'
 
-  const vendorMeta = vendorByName(detailVendor.value)
-  issue.paymentStatus = vendorMeta?.engagementType === 'per_job' ? 'pending' : 'not_applicable'
-
-  showToast(wasUnassigned ? `${issue.id} updated — vendor assigned` : `${issue.id} updated — schedule changed`)
-  closeDetail()
+  try {
+    await api.patch(`/complaints/${issue.id}/assign`, {
+      vendor_id:         vendorObj.id,
+      vendor_start_time: start.toISOString(),
+      vendor_end_time:   end.toISOString(),
+    })
+    await fetchIssues()
+    showToast(wasUnassigned ? `${issue.title} — vendor assigned` : `${issue.title} — schedule changed`)
+    closeDetail()
+  } catch (err) {
+    showToast(err.response?.data?.error || 'Failed to assign vendor')
+  }
 }
 
+
 /* ---------------- Complete / payment ---------------- */
+
 
 const completingVendor = computed(() => vendorByName(selected.value?.vendor))
 const needsPayment      = computed(() => completingVendor.value?.engagementType === 'per_job')
 
-function confirmComplete() {
-  if (needsPayment.value && !completePaymentAmount.value) return
-  const issue = selected.value
-  issue.status        = 'Resolved'
-  issue.paymentStatus = needsPayment.value ? 'paid' : 'not_applicable'
-  issue.paymentAmount = needsPayment.value ? Number(completePaymentAmount.value) : null
 
-  showToast(`${issue.id} updated — closed${needsPayment.value ? ' and payment recorded' : ''}`)
-  closeDetail()
+// Operating is the default source. Other funds unlock only if Operating's
+// balance can't cover the amount currently being entered — mirrors the
+// Society Funds page's debit-fund logic exactly.
+const completeFundOptions = computed(() => {
+  const operating = funds.value.find(f => f.fund_name === 'operating')
+  const amount = Number(completePaymentAmount.value) || 0
+  const operatingInsufficient = !operating || operating.balance < amount
+  return operatingInsufficient
+  ? [...funds.value].sort((a, b) => (a.fund_name === 'operating' ? -1 : b.fund_name === 'operating' ? 1 : 0))
+  : funds.value.filter(f => f.fund_name === 'operating')
+})
+
+
+// Keep the selected fund valid if the available options change (e.g. user
+// picked a non-Operating fund, then lowered the amount so Operating becomes
+// sufficient again).
+watch(completeFundOptions, (options) => {
+  if (needsPayment.value && !options.some(f => f.fund_name === completeFundName.value)) {
+    completeFundName.value = options[0]?.fund_name || ''
+  }
+})
+const selectedFundInsufficient = computed(() => {
+  if (!needsPayment.value || !completeFundName.value) return null
+  const fund = funds.value.find(f => f.fund_name === completeFundName.value)
+  const amount = Number(completePaymentAmount.value) || 0
+  if (!fund || amount <= 0) return null
+  return fund.balance < amount
+    ? { balance: fund.balance, short: amount - fund.balance }
+    : null
+})
+
+
+async function confirmComplete() {
+  if (needsPayment.value && (!completePaymentAmount.value || !completeFundName.value)) return
+  const issue = selected.value
+
+
+  try {
+    if (needsPayment.value) {
+      // debit the chosen fund before closing the issue, same endpoint the
+      // Society Funds page uses for manual transactions
+      await api.post('/funds/transactions', {
+        type: 'debit',
+        fund_name: completeFundName.value,
+        amount: Number(completePaymentAmount.value),
+        description: `Vendor payment — ${completingVendor.value?.name} — ${issue.title} (${issue.id})`,
+      })
+    }
+
+
+    await api.patch(`/complaints/${issue.id}/status`, {
+      status: 'resolved',
+      payment_amount: needsPayment.value ? Number(completePaymentAmount.value) : null,
+      payment_fund: needsPayment.value ? completeFundName.value : null,
+    })
+
+
+    // no payment column on CommunityIssue yet — remembered client-side only
+    localPayments.value = {
+      ...localPayments.value,
+      [issue.id]: needsPayment.value
+        ? { status: 'paid', amount: Number(completePaymentAmount.value), fund: completeFundName.value }
+        : { status: 'not_applicable', amount: null, fund: null },
+    }
+
+
+    await fetchIssues()
+    if (needsPayment.value) await fetchFunds() // balances just changed
+    showToast(
+      `${issue.title} — closed` +
+      (needsPayment.value ? ` and ₹${completePaymentAmount.value} paid from ${fundLabel(completeFundName.value)}` : '')
+    )
+    closeDetail()
+  } catch (err) {
+    showToast(err.response?.data?.error || 'Failed to close issue')
+  }
 }
 
+
 /* ---------------- Merge ---------------- */
+
 
 const mergeableIssues = computed(() =>
   visibleIssues.value.filter(i => i.id !== selected.value?.id && !['Resolved', 'Rejected'].includes(i.status))
 )
 
-function confirmMerge() {
+
+async function confirmMerge() {
   if (!mergeTarget.value) return
   const target = issues.value.find(i => i.id === mergeTarget.value)
   const current = selected.value
   if (!target || !current) return
 
-  target.reports.push(...current.reports)
-  if (priorityRank[current.priority] > priorityRank[target.priority]) {
-    target.priority = current.priority
-  }
-  current.status = 'Merged'
 
-  showToast(`${current.id} merged into ${target.id}`)
-  closeDetail()
+  try {
+    await api.post(`/complaints/${target.id}/merge`, { other_issue_id: current.id })
+    await fetchIssues()
+    showToast(`${current.title} merged into ${target.title}`)
+    closeDetail()
+  } catch (err) {
+    showToast(err.response?.data?.error || 'Failed to merge issues')
+  }
 }
+
 
 /* ---------------- Reject ---------------- */
 
-function confirmReject() {
+
+async function confirmReject() {
   if (!rejectReason.value.trim()) return
   const issue = selected.value
-  issue.status = 'Rejected'
-  issue.rejectionReason = rejectReason.value.trim()
 
-  showToast(`${issue.id} rejected`)
-  closeDetail()
+
+  try {
+    // backend has no dedicated 'rejected' status — 'closed' is the closest
+    // terminal state that isn't 'resolved', so we repurpose it and label it
+    // "Rejected" in the UI (see STATUS_TO_FRONTEND)
+    await api.patch(`/complaints/${issue.id}/status`, { status: 'closed' })
+
+
+    // no rejection-reason column on CommunityIssue yet — remembered client-side only
+    rejectionReasons.value = { ...rejectionReasons.value, [issue.id]: rejectReason.value.trim() }
+
+
+    await fetchIssues()
+    showToast(`${issue.title} rejected`)
+    closeDetail()
+  } catch (err) {
+    showToast(err.response?.data?.error || 'Failed to reject issue')
+  }
 }
 
+
 /* ---------------- Badge helpers ---------------- */
+
 
 function priorityClass(p) {
   if (p === 'High')   return 'pri-high'
   if (p === 'Medium') return 'pri-medium'
   return 'pri-low'
 }
+
 
 function statusClass(s) {
   if (s === 'Open')        return 'status-open'
@@ -363,8 +612,10 @@ function statusClass(s) {
 }
 </script>
 
+
 <template>
   <div class="sec-issues">
+
 
     <!-- header -->
     <div class="page-header">
@@ -373,6 +624,7 @@ function statusClass(s) {
         <p class="page-sub">{{ visibleIssues.length }} total · {{ openCount }} open · {{ unassignedCount }} unassigned</p>
       </div>
     </div>
+
 
     <!-- toolbar -->
     <div class="toolbar">
@@ -405,12 +657,15 @@ function statusClass(s) {
           <select v-model="sortBy" class="filter-select">
             <option value="priority-desc">Priority: High → Low</option>
             <option value="priority-asc">Priority: Low → High</option>
+            <option value="ai-priority-desc">AI Priority: High → Low</option>
+            <option value="ai-priority-asc">AI Priority: Low → High</option>
             <option value="reports-asc">Reports: Fewest first</option>
             <option value="reports-desc">Reports: Most first</option>
           </select>
         </div>
       </div>
     </div>
+
 
     <!-- issues table -->
     <div class="table-wrap">
@@ -429,16 +684,41 @@ function statusClass(s) {
         <tbody>
           <tr v-for="i in sortedFiltered" :key="i.id" class="issue-row" @click="openDetail(i)">
 
+
             <td>
               <span class="issue-title">{{ i.title }}</span>
               <span class="issue-meta">{{ i.location }} · {{ i.id }}</span>
             </td>
 
-            <td><span class="category-badge">{{ i.category }}</span></td>
 
-            <td><span :class="['priority-badge', priorityClass(i.priority)]">{{ i.priority }}</span></td>
+            <td>
+              <span class="category-badge">{{ i.category }}</span>
+              <span v-if="i.aiPending" class="ai-badge ai-pending">🤖 ...</span>
+              <span
+                v-else-if="i.aiCategory"
+                :class="['ai-badge', { 'ai-disagrees': i.aiCategory !== i.category }]"
+                :title="i.aiCategory !== i.category ? `AI thinks this is ${i.aiCategory} — differs from the set category` : 'AI agrees with the set category'"
+              >
+                ✨ AI: {{ i.aiCategory }}
+              </span>
+            </td>
+
+
+            <td>
+              <span :class="['priority-badge', priorityClass(i.priority)]">{{ i.priority }}</span>
+              <span v-if="i.aiPending" class="ai-badge ai-pending">🤖 ...</span>
+              <span
+                v-else-if="i.aiPriority"
+                :class="['ai-badge', { 'ai-disagrees': i.aiPriority !== i.priority }]"
+                :title="i.aiPriority !== i.priority ? `AI thinks this is ${i.aiPriority} priority — differs from the set priority` : 'AI agrees with the set priority'"
+              >
+                ✨ AI: {{ i.aiPriority }}
+              </span>
+            </td>
+
 
             <td><span :class="['status-badge', statusClass(i.status)]">{{ i.status }}</span></td>
+
 
             <td>
               <div v-if="i.vendor" class="vendor-cell">
@@ -448,11 +728,15 @@ function statusClass(s) {
               <span v-else class="unassigned-text">Unassigned</span>
             </td>
 
+
             <td><span class="reports-badge">{{ i.reports.length }}</span></td>
+
 
             <td class="date-cell">{{ i.date }}</td>
 
+
           </tr>
+
 
           <tr v-if="sortedFiltered.length === 0">
             <td colspan="7" class="empty-row">No issues match the selected filters</td>
@@ -461,9 +745,11 @@ function statusClass(s) {
       </table>
     </div>
 
+
     <!-- issue detail modal -->
     <div v-if="showDetail" class="modal-overlay" @click.self="closeDetail">
       <div class="modal modal-lg">
+
 
         <div class="modal-header">
           <div>
@@ -473,7 +759,9 @@ function statusClass(s) {
           <button class="close-btn" @click="closeDetail">✕</button>
         </div>
 
+
         <div class="modal-body">
+
 
           <div class="badges-row">
             <span class="category-badge">{{ selected?.category }}</span>
@@ -481,9 +769,14 @@ function statusClass(s) {
             <span :class="['status-badge', statusClass(selected?.status)]">{{ selected?.status }}</span>
           </div>
 
-          <div v-if="selected?.status === 'Open'" class="ai-chip">
+
+          <div v-if="selected?.status === 'Open' && selected?.aiCategory" class="ai-chip">
             ✨ AI suggested {{ selected?.aiCategory }} · {{ selected?.aiPriority }} priority
           </div>
+          <div v-else-if="selected?.status === 'Open' && selected?.aiPending" class="ai-chip ai-pending">
+            🤖 AI analysis in progress...
+          </div>
+
 
           <!-- AI summary + individual reports -->
           <div class="section">
@@ -503,26 +796,30 @@ function statusClass(s) {
             </div>
           </div>
 
+
           <!-- merge -->
           <div v-if="!['Resolved', 'Rejected'].includes(selected?.status)" class="section merge-section">
             <span class="section-label">Duplicate of another issue?</span>
             <div class="merge-row">
               <select v-model="mergeTarget" class="n-input">
                 <option value="">Select an issue to merge into...</option>
-                <option v-for="m in mergeableIssues" :key="m.id" :value="m.id">{{ m.id }} — {{ m.title }}</option>
+                <option v-for="m in mergeableIssues" :key="m.id" :value="m.id">{{ m.title }} - {{ m.id }} </option>
               </select>
               <button class="btn-outline" :disabled="!mergeTarget" @click="confirmMerge">Merge</button>
             </div>
           </div>
 
+
           <!-- assign / reschedule -->
           <div v-if="!['Resolved', 'Rejected'].includes(selected?.status)" class="section">
             <span class="section-label">{{ selected?.vendor ? 'Vendor & Schedule' : 'Assign Vendor' }}</span>
+
 
             <label>Category</label>
             <select v-model="detailCategory" class="n-input">
               <option v-for="c in categoryOptions.slice(1)" :key="c" :value="c">{{ c }}</option>
             </select>
+
 
             <div class="vendor-row">
               <div class="vendor-select-wrap">
@@ -532,9 +829,10 @@ function statusClass(s) {
                   <option v-for="v in vendorsForCategory" :key="v.name" :value="v.name">{{ v.name }}</option>
                 </select>
               </div>
-              <button class="btn-outline ai-suggest-btn" @click="suggestVendorAI">✨ AI Suggest</button>
+              <button class="btn-outline ai-suggest-btn" @click="suggestVendorAI">🎯 Find Matching Vendor</button>
             </div>
             <p v-if="lastAiNote" class="ai-note">{{ lastAiNote }}</p>
+
 
             <div class="slot-row">
               <div class="slot-field">
@@ -553,10 +851,12 @@ function statusClass(s) {
               </div>
             </div>
 
+
             <div v-if="conflict" class="conflict-warning">
               {{ detailVendor }} is already booked {{ formatSlot(conflict.scheduledStart, conflict.durationMinutes) }}
               for {{ conflict.id }}. Pick a different slot or vendor.
             </div>
+
 
             <button
               class="btn-primary"
@@ -567,27 +867,42 @@ function statusClass(s) {
             </button>
           </div>
 
+
           <!-- complete -->
           <div v-if="selected?.status === 'In Progress'" class="section">
             <span class="section-label">Mark Complete</span>
 
+
             <template v-if="needsPayment">
               <label>Payment amount (₹)</label>
               <input type="number" v-model="completePaymentAmount" class="n-input" placeholder="e.g. 800" min="0" />
+
+
+              <label>Pay from</label>
+              <select v-model="completeFundName" class="n-input">
+                <option v-for="f in completeFundOptions" :key="f.fund_name" :value="f.fund_name">{{ fundLabel(f.fund_name) }}</option>
+              </select>
+              <p v-if="selectedFundInsufficient" class="helper-text" style="color: var(--color-danger-text);">
+                {{ fundLabel(completeFundName) }} only has ₹{{ selectedFundInsufficient.balance }} — ₹{{ selectedFundInsufficient.short }} short of ₹{{ completePaymentAmount }}. You can still proceed, or pick a different fund.
+              </p>
+
+
               <p class="helper-text">{{ completingVendor?.name }} is a per-job vendor — record what was paid before closing.</p>
             </template>
             <template v-else>
               <p class="helper-text">{{ completingVendor?.name }} is salaried staff — no per-task payment needed.</p>
             </template>
 
+
             <button
               class="btn-primary btn-complete"
-              :disabled="needsPayment && !completePaymentAmount"
+              :disabled="needsPayment && (!completePaymentAmount || !completeFundName)"
               @click="confirmComplete"
             >
               {{ needsPayment ? 'Record Payment & Close' : 'Close Issue' }}
             </button>
           </div>
+
 
           <!-- resolved summary -->
           <div v-if="selected?.status === 'Resolved'" class="section">
@@ -595,10 +910,13 @@ function statusClass(s) {
             <div class="resolved-card">
               <span class="vendor-name">{{ selected?.vendor }}</span>
               <span class="slot-text">{{ formatSlot(selected?.scheduledStart, selected?.durationMinutes) }}</span>
-              <span v-if="selected?.paymentStatus === 'paid'" class="pay-text pay-paid">Paid ₹{{ selected?.paymentAmount }}</span>
+              <span v-if="selected?.paymentStatus === 'paid'" class="pay-text pay-paid">
+                Paid ₹{{ selected?.paymentAmount }}{{ selected?.paymentFund ? ` from ${fundLabel(selected.paymentFund)}` : '' }}
+              </span>
               <span v-else class="pay-text">No payment applicable</span>
             </div>
           </div>
+
 
           <!-- reject -->
           <div v-if="selected?.status === 'Open' || selected?.status === 'In Progress'" class="section reject-section">
@@ -614,6 +932,7 @@ function statusClass(s) {
             </button>
           </div>
 
+
           <!-- rejected summary -->
           <div v-if="selected?.status === 'Rejected'" class="section">
             <span class="section-label">Rejected</span>
@@ -622,9 +941,11 @@ function statusClass(s) {
             </div>
           </div>
 
+
         </div>
       </div>
     </div>
+
 
     <!-- toast -->
     <transition name="toast-fade">
@@ -634,15 +955,19 @@ function statusClass(s) {
       </div>
     </transition>
 
+
   </div>
 </template>
+
 
 <style scoped>
 .sec-issues {
   max-width: var(--content-max-width);
 }
 
+
 .page-header { margin-bottom: 20px; }
+
 
 .page-header h2 {
   font-size: var(--font-size-3xl);
@@ -650,11 +975,13 @@ function statusClass(s) {
   letter-spacing: -0.4px;
 }
 
+
 .page-sub {
   font-size: var(--font-size-sm);
   color: var(--color-text-muted);
   margin-top: 4px;
 }
+
 
 /* toolbar */
 .toolbar {
@@ -664,12 +991,14 @@ function statusClass(s) {
   margin-bottom: 16px;
 }
 
+
 .toolbar-row {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
 }
+
 
 .search-input {
   height: 42px;
@@ -684,7 +1013,9 @@ function statusClass(s) {
   transition: border-color var(--transition-fast);
 }
 
+
 .search-input:focus { border-color: var(--c-600); }
+
 
 .status-pill-group {
   display: flex;
@@ -695,6 +1026,7 @@ function statusClass(s) {
   padding: 4px;
 }
 
+
 .status-pill {
   padding: 7px 12px;
   border-radius: var(--radius-sm);
@@ -704,7 +1036,9 @@ function statusClass(s) {
   transition: all var(--transition-fast);
 }
 
+
 .status-pill.active { background: var(--c-800); color: #fff; }
+
 
 .right-filters {
   display: flex;
@@ -712,6 +1046,7 @@ function statusClass(s) {
   margin-left: auto;
   flex-wrap: wrap;
 }
+
 
 .filter-select {
   height: 36px;
@@ -726,6 +1061,7 @@ function statusClass(s) {
   cursor: pointer;
 }
 
+
 /* table */
 .table-wrap {
   background: var(--color-surface);
@@ -735,13 +1071,16 @@ function statusClass(s) {
   box-shadow: var(--shadow-sm);
 }
 
+
 .issues-table {
   width: 100%;
   border-collapse: collapse;
   font-size: var(--font-size-sm);
 }
 
+
 .issues-table thead tr { border-bottom: 1px solid var(--color-border); }
+
 
 .issues-table th {
   padding: 12px 20px;
@@ -755,16 +1094,20 @@ function statusClass(s) {
   white-space: nowrap;
 }
 
+
 .issues-table td {
   padding: 14px 20px;
   border-bottom: 1px solid var(--color-border);
   vertical-align: middle;
 }
 
+
 .issues-table tbody tr:last-child td { border-bottom: none; }
+
 
 .issue-row { cursor: pointer; transition: background var(--transition-fast); }
 .issue-row:hover { background: var(--color-surface-muted); }
+
 
 .issue-title {
   display: block;
@@ -772,12 +1115,14 @@ function statusClass(s) {
   color: var(--color-text-primary);
 }
 
+
 .issue-meta {
   display: block;
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
   margin-top: 2px;
 }
+
 
 .category-badge {
   display: inline-block;
@@ -790,6 +1135,7 @@ function statusClass(s) {
   border: 1px solid var(--color-border);
 }
 
+
 .priority-badge, .status-badge {
   padding: 3px 10px;
   border-radius: var(--radius-pill);
@@ -797,18 +1143,49 @@ function statusClass(s) {
   font-weight: 700;
 }
 
+
 .pri-high   { background: var(--color-danger-bg);  color: var(--color-danger-text);  }
 .pri-medium { background: var(--color-warning-bg); color: var(--color-warning-text); }
 .pri-low    { background: var(--color-success-bg); color: var(--color-success-text); }
+
+
+.ai-badge {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #6B3FA0;
+  white-space: nowrap;
+}
+
+
+.ai-badge.ai-disagrees {
+  color: var(--color-danger-text);
+}
+
+
+.ai-pending {
+  animation: ai-pending-pulse 1.2s ease-in-out infinite;
+}
+
+
+@keyframes ai-pending-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
 
 .status-open     { background: var(--color-info-bg);    color: var(--color-info-text);    }
 .status-progress { background: var(--color-warning-bg); color: var(--color-warning-text); }
 .status-resolved { background: var(--color-success-bg); color: var(--color-success-text); }
 .status-rejected { background: var(--color-danger-bg);  color: var(--color-danger-text);  }
 
+
 .vendor-cell { display: flex; flex-direction: column; gap: 2px; }
 
+
 .vendor-name { font-weight: 700; color: var(--color-text-primary); }
+
 
 .slot-text {
   font-size: var(--font-size-xs);
@@ -816,11 +1193,13 @@ function statusClass(s) {
   color: var(--color-text-muted);
 }
 
+
 .unassigned-text {
   font-size: var(--font-size-sm);
   color: var(--color-text-muted);
   font-style: italic;
 }
+
 
 .reports-badge {
   display: inline-flex;
@@ -837,7 +1216,9 @@ function statusClass(s) {
   color: var(--color-text-secondary);
 }
 
+
 .date-cell { color: var(--color-text-muted); white-space: nowrap; }
+
 
 .empty-row {
   text-align: center;
@@ -845,6 +1226,7 @@ function statusClass(s) {
   padding: 40px;
   font-size: var(--font-size-md);
 }
+
 
 /* modal */
 .modal-overlay {
@@ -858,6 +1240,7 @@ function statusClass(s) {
   padding: 20px;
 }
 
+
 .modal {
   background: var(--color-surface);
   border-radius: var(--radius-xl);
@@ -866,12 +1249,14 @@ function statusClass(s) {
   box-shadow: var(--shadow-lg);
 }
 
+
 .modal-lg {
   max-width: 560px;
   max-height: 88vh;
   display: flex;
   flex-direction: column;
 }
+
 
 .modal-header {
   display: flex;
@@ -882,7 +1267,9 @@ function statusClass(s) {
   flex-shrink: 0;
 }
 
+
 .modal-header h3 { font-size: var(--font-size-xl); font-weight: 700; }
+
 
 .modal-sub {
   display: block;
@@ -890,6 +1277,7 @@ function statusClass(s) {
   color: var(--color-text-muted);
   margin-top: 3px;
 }
+
 
 .close-btn {
   width: 32px;
@@ -904,7 +1292,9 @@ function statusClass(s) {
   transition: background var(--transition-fast);
 }
 
+
 .close-btn:hover { background: var(--color-border); }
+
 
 .modal-body {
   padding: 20px 24px 26px;
@@ -914,7 +1304,9 @@ function statusClass(s) {
   gap: 18px;
 }
 
+
 .badges-row { display: flex; gap: 8px; flex-wrap: wrap; }
+
 
 .ai-chip {
   align-self: flex-start;
@@ -926,10 +1318,12 @@ function statusClass(s) {
   font-weight: 700;
 }
 
+
 .section {
   padding-top: 16px;
   border-top: 1px solid var(--color-border);
 }
+
 
 .section-label {
   display: block;
@@ -941,6 +1335,7 @@ function statusClass(s) {
   margin-bottom: 10px;
 }
 
+
 .ai-summary {
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
@@ -949,11 +1344,13 @@ function statusClass(s) {
   margin-bottom: 12px;
 }
 
+
 .reports-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
+
 
 .report-card {
   background: var(--color-surface-soft);
@@ -962,6 +1359,7 @@ function statusClass(s) {
   padding: 10px 12px;
 }
 
+
 .report-head {
   display: flex;
   justify-content: space-between;
@@ -969,22 +1367,26 @@ function statusClass(s) {
   margin-bottom: 4px;
 }
 
+
 .report-resident {
   font-size: var(--font-size-xs);
   font-weight: 700;
   color: var(--color-text-primary);
 }
 
+
 .report-date {
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
 }
+
 
 .report-desc {
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
   line-height: 1.5;
 }
+
 
 .resident-priority-tag {
   display: inline-block;

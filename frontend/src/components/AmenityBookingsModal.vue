@@ -88,7 +88,7 @@ function handleCancel(b) {
 </template>
 
 <style scoped>
-.overlay { position: fixed; inset: 0; background: rgba(15,23,42,0.5); display: flex; align-items: center; justify-content: center; z-index: 120; padding: 20px; }
+.overlay { position: fixed; inset: 0; background: rgba(15,23,42,0.5); display: flex; align-items: center; justify-content: center; z-index: var(--z-modal); padding: 20px; }
 .modal { background: var(--color-surface); border-radius: var(--radius-xl); width: 100%; max-width: 520px; max-height: 88vh; overflow-y: auto; padding: 24px; position: relative; box-shadow: var(--shadow-md); }
 .close-btn { position: absolute; top: 14px; right: 14px; width: 30px; height: 30px; border-radius: 50%; background: var(--badge-closed-bg); color: var(--color-text-primary); font-size: 13px; display: flex; align-items: center; justify-content: center; }
 .modal h3 { font-size: var(--font-size-lg); font-weight: 800; color: var(--color-text-primary); margin-bottom: 14px; padding-right: 30px; }

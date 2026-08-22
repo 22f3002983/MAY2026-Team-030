@@ -110,7 +110,7 @@ function proceedToBook() {
 <style scoped>
 .overlay {
   position: fixed; inset: 0; background: rgba(15, 23, 42, 0.5);
-  display: flex; align-items: center; justify-content: center; z-index: 100; padding: 20px;
+  display: flex; align-items: center; justify-content: center; z-index: var(--z-modal); padding: 20px;
 }
 .sheet {
   background: var(--color-surface); border-radius: var(--radius-xl);

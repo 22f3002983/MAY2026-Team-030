@@ -118,6 +118,51 @@ async function changePassword() {
   }
 }
 
+const showEmailForm  = ref(false)
+const changingEmail  = ref(false)
+const emailError     = ref('')
+const emailSuccess   = ref('')
+const emailForm = ref({ new_email: '', current_password: '' })
+
+function toggleEmailForm() {
+  showEmailForm.value = !showEmailForm.value
+  emailForm.value = { new_email: '', current_password: '' }
+  emailError.value = ''
+  emailSuccess.value = ''
+}
+
+async function changeEmail() {
+  emailError.value = ''
+
+  if (!emailForm.value.new_email || !emailForm.value.current_password) {
+    emailError.value = 'New email and current password are required'
+    return
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailForm.value.new_email)) {
+    emailError.value = 'Enter a valid email address'
+    return
+  }
+
+  changingEmail.value = true
+  try {
+    await api.post('/auth/change-email', {
+      new_email:         emailForm.value.new_email,
+      current_password:  emailForm.value.current_password,
+    })
+    await loadProfile()
+    emailSuccess.value = 'Email updated successfully.'
+    emailForm.value = { new_email: '', current_password: '' }
+    setTimeout(() => {
+      showEmailForm.value = false
+      emailSuccess.value = ''
+    }, 2000)
+  } catch (err) {
+    emailError.value = err.response?.data?.error || 'Could not update email'
+  } finally {
+    changingEmail.value = false
+  }
+}
+
 // fields grouped into logical sections instead of one flat grid —
 // personal details vs vehicle details read very differently and were
 // getting visually jumbled together before
@@ -270,6 +315,39 @@ const readonlyFields = ['flat', 'email']
               <button class="cancel-btn" @click="togglePasswordForm">Cancel</button>
               <button class="save-btn" :disabled="changingPassword" @click="changePassword">
                 {{ changingPassword ? 'Saving…' : 'Update password' }}
+              </button>
+            </div>
+          </div>
+
+          <div class="security-row security-row-divider">
+            <div>
+              <span class="section-label">Email</span>
+              <p class="security-sub">Update the email used to sign in</p>
+            </div>
+            <button v-if="!showEmailForm" class="link-action-btn" @click="toggleEmailForm">
+              Change email
+            </button>
+          </div>
+
+          <div v-if="showEmailForm" class="password-form">
+            <div v-if="emailError" class="pw-error">{{ emailError }}</div>
+            <div v-if="emailSuccess" class="pw-success">✓ {{ emailSuccess }}</div>
+
+            <div class="edit-grid">
+              <div class="edit-field">
+                <label>New email</label>
+                <input v-model="emailForm.new_email" type="email" class="n-input" autocomplete="email" />
+              </div>
+              <div class="edit-field">
+                <label>Current password</label>
+                <input v-model="emailForm.current_password" type="password" class="n-input" autocomplete="current-password" />
+              </div>
+            </div>
+
+            <div class="edit-actions pw-actions">
+              <button class="cancel-btn" @click="toggleEmailForm">Cancel</button>
+              <button class="save-btn" :disabled="changingEmail" @click="changeEmail">
+                {{ changingEmail ? 'Saving…' : 'Update email' }}
               </button>
             </div>
           </div>
@@ -496,6 +574,12 @@ const readonlyFields = ['flat', 'email']
 }
 
 .security-row .section-label { margin-bottom: 4px; }
+
+.security-row-divider {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--color-border);
+}
 
 .security-sub {
   font-size: var(--font-size-sm);

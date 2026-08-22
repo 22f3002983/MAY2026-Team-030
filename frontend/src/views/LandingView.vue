@@ -260,9 +260,9 @@ Residents raise and track issues in seconds, the committee manages the whole soc
             <div class="quote-mark">"</div>
             <div class="quote-text">Committee work that used to eat my evenings now takes ten minutes a day. The residents finally feel heard.</div>
             <div class="quote-author">
-              <div class="quote-avatar">PN</div>
+              <div class="quote-avatar">PM</div>
               <div>
-                <div class="quote-name">Priya Nair</div>
+                <div class="quote-name">Priya Menon</div>
                 <div class="quote-role">Hon. Secretary</div>
               </div>
             </div>
@@ -1113,5 +1113,3 @@ Residents raise and track issues in seconds, the committee manages the whole soc
   .stats-inner { grid-template-columns: 1fr 1fr; }
 }
 </style>
-
-

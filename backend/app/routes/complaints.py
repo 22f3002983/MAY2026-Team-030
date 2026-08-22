@@ -492,6 +492,35 @@ def get_complaint(id_):
 
 
 
+# ── POST /api/complaints/<id>/retry-ai — manual on-demand retry (secretary) ──
+# ai_suggested_category/priority are normally set once, in a background
+# thread, right when the complaint is created — a single best-effort attempt
+# with no retry of its own. The scheduler sweeps for stuck issues every 5
+# minutes (see retry_pending_ai_suggestions in scheduler.py), but this lets
+# the secretary force an immediate retry instead of waiting for that sweep.
+# Only fills whichever field is still None — never overwrites one that
+# already has a value, so a working suggestion can't be clobbered.
+
+@complaints_bp.route('/<id_>/retry-ai', methods=['POST'])
+@login_required
+def retry_ai_suggestions(id_):
+    if current_user.role != 'secretary':
+        return jsonify({'error': 'Only secretary can retry AI suggestions'}), 403
+
+    issue = resolve_issue(id_)
+    if not issue:
+        return jsonify({'error': 'Not found'}), 404
+
+    text = f'{issue.title}. {issue.description}'
+    if issue.ai_suggested_category is None:
+        issue.ai_suggested_category = suggest_category(text, VALID_CATEGORIES)
+    if issue.ai_suggested_priority is None:
+        issue.ai_suggested_priority = suggest_priority(issue.title, issue.description, issue.category)
+
+    db.session.commit()
+    return jsonify({'complaint': issue_to_dict(issue)}), 200
+
+
 # ── PATCH /api/complaints/<id>/assign — assign vendor (secretary only) ──
 
 

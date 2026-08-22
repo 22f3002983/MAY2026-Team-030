@@ -959,7 +959,7 @@ onMounted(async () => {
 
 
 /* ---------- Modal ---------- */
-.modal-overlay { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.5); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 20px; }
+.modal-overlay { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.5); display: flex; align-items: center; justify-content: center; z-index: var(--z-modal); padding: 20px; }
 .modal-sheet { background: var(--color-surface); border-radius: var(--radius-xl); width: 100%; max-width: 480px; max-height: 90vh; overflow-y: auto; position: relative; box-shadow: var(--shadow-md); }
 .form-modal { max-width: 560px; }
 .modal-close-btn { position: absolute; top: 12px; right: 12px; z-index: 2; width: 32px; height: 32px; border-radius: 50%; background: rgba(0,0,0,0.06); color: var(--color-text-primary); font-size: 14px; display: flex; align-items: center; justify-content: center; }

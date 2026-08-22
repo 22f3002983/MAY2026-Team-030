@@ -81,6 +81,22 @@ async function addBill() {
   } finally {
     submitting.value = false
   }
+}const retryingAnalysis = ref(new Set())
+
+async function retryAnalysis(bill) {
+  if (retryingAnalysis.value.has(bill.id)) return
+  retryingAnalysis.value = new Set(retryingAnalysis.value).add(bill.id)
+  try {
+    const res = await api.post(`/electricity-bills/${bill.id}/retry-analysis`)
+    const idx = bills.value.findIndex(b => b.id === bill.id)
+    if (idx !== -1) bills.value[idx] = { ...res.data.bill, analyzing: false }
+  } catch (err) {
+    console.error('Failed to retry bill analysis', err)
+  } finally {
+    const next = new Set(retryingAnalysis.value)
+    next.delete(bill.id)
+    retryingAnalysis.value = next
+  }
 }
 </script>
 
@@ -120,7 +136,15 @@ async function addBill() {
             <span class="spinner"></span> Analysing usage...
           </div>
           <p v-else-if="b.ai_analysis" class="analysis-text">{{ b.ai_analysis }}</p>
-          <p v-else class="analysis-pending">Analysis pending</p>
+          <div v-else class="analysis-pending-row">
+            <p class="analysis-pending">Analysis pending</p>
+            <button
+              class="ai-retry-btn"
+              title="Retry AI analysis now"
+              :disabled="retryingAnalysis.has(b.id)"
+              @click="retryAnalysis(b)"
+            >{{ retryingAnalysis.has(b.id) ? '⏳' : '↻ Retry now' }}</button>
+          </div>
         </div>
       </div>
     </div>
@@ -290,6 +314,26 @@ async function addBill() {
   color: var(--color-text-muted);
   font-style: italic;
 }
+
+.analysis-pending-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ai-retry-btn {
+  border: none;
+  background: none;
+  color: var(--c-600, #0EA5B7);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.ai-retry-btn:hover:not(:disabled) { background: rgba(14, 165, 183, 0.1); }
+.ai-retry-btn:disabled { cursor: not-allowed; opacity: 0.6; }
 
 .analysis-loading {
   display: flex;

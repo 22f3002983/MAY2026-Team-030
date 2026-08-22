@@ -334,6 +334,41 @@ def create_invite():
     }), 200
 
 
+@auth_bp.route('/change-email', methods=['POST'])
+@login_required
+def change_email():
+    """
+    Change the current user's email.
+    Body: { new_email, current_password }
+    """
+    data = request.get_json() or {}
+    new_email        = data.get('new_email', '').strip().lower()
+    current_password = data.get('current_password', '')
+
+    if not new_email or not current_password:
+        return jsonify({'error': 'new_email and current_password are required'}), 400
+
+    if not current_user.check_password(current_password):
+        return jsonify({'error': 'Current password is incorrect'}), 401
+
+    if '@' not in new_email or '.' not in new_email.split('@')[-1]:
+        return jsonify({'error': 'Enter a valid email address'}), 400
+
+    if new_email == current_user.email:
+        return jsonify({'error': 'New email must be different from the current email'}), 400
+
+    if User.query.filter_by(email=new_email).first():
+        return jsonify({'error': 'Email already in use'}), 409
+
+    current_user.email = new_email
+    db.session.commit()
+
+    return jsonify({
+        'message': 'Email updated successfully',
+        'user':    user_to_dict(current_user),
+    }), 200
+
+
 @auth_bp.route('/change-password', methods=['POST'])
 @login_required
 def change_password():

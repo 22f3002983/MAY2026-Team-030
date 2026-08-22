@@ -236,6 +236,26 @@ async function fetchIssues(silent = false) {
 // finishes, without the secretary needing to manually refresh
 let aiRefreshInterval = null
 
+const retryingAi = ref(new Set())
+
+async function retryAi(issue) {
+  if (retryingAi.value.has(issue.id)) return
+  retryingAi.value = new Set(retryingAi.value).add(issue.id)
+  try {
+    const res = await api.post(`/complaints/${issue.id}/retry-ai`)
+    const updated = mapIssue(res.data.complaint)
+    const idx = issues.value.findIndex(i => i.id === issue.id)
+    if (idx !== -1) issues.value[idx] = updated
+    if (selected.value?.id === issue.id) selected.value = updated
+  } catch (err) {
+    console.error('Failed to retry AI suggestion', err)
+  } finally {
+    const next = new Set(retryingAi.value)
+    next.delete(issue.id)
+    retryingAi.value = next
+  }
+}
+
 
 onMounted(async () => {
   await fetchVendors()
@@ -694,6 +714,13 @@ function statusClass(s) {
             <td>
               <span class="category-badge">{{ i.category }}</span>
               <span v-if="i.aiPending" class="ai-badge ai-pending">🤖 ...</span>
+              <button
+                v-if="i.aiPending"
+                class="ai-retry-btn"
+                title="Retry AI suggestion now"
+                :disabled="retryingAi.has(i.id)"
+                @click.stop="retryAi(i)"
+              >{{ retryingAi.has(i.id) ? '⏳' : '↻' }}</button>
               <span
                 v-else-if="i.aiCategory"
                 :class="['ai-badge', { 'ai-disagrees': i.aiCategory !== i.category }]"
@@ -707,6 +734,13 @@ function statusClass(s) {
             <td>
               <span :class="['priority-badge', priorityClass(i.priority)]">{{ i.priority }}</span>
               <span v-if="i.aiPending" class="ai-badge ai-pending">🤖 ...</span>
+              <button
+                v-if="i.aiPending"
+                class="ai-retry-btn"
+                title="Retry AI suggestion now"
+                :disabled="retryingAi.has(i.id)"
+                @click.stop="retryAi(i)"
+              >{{ retryingAi.has(i.id) ? '⏳' : '↻' }}</button>
               <span
                 v-else-if="i.aiPriority"
                 :class="['ai-badge', { 'ai-disagrees': i.aiPriority !== i.priority }]"
@@ -775,6 +809,12 @@ function statusClass(s) {
           </div>
           <div v-else-if="selected?.status === 'Open' && selected?.aiPending" class="ai-chip ai-pending">
             🤖 AI analysis in progress...
+            <button
+              class="ai-retry-btn"
+              title="Retry AI suggestion now"
+              :disabled="retryingAi.has(selected.id)"
+              @click="retryAi(selected)"
+            >{{ retryingAi.has(selected.id) ? '⏳' : '↻ Retry now' }}</button>
           </div>
 
 
@@ -1173,6 +1213,23 @@ function statusClass(s) {
   0%, 100% { opacity: 0.5; }
   50% { opacity: 1; }
 }
+
+
+.ai-retry-btn {
+  display: inline-block;
+  margin-top: 4px;
+  margin-left: 6px;
+  border: none;
+  background: none;
+  color: #6B3FA0;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.ai-retry-btn:hover:not(:disabled) { background: #F1E9FA; }
+.ai-retry-btn:disabled { cursor: not-allowed; opacity: 0.6; }
 
 
 .status-open     { background: var(--color-info-bg);    color: var(--color-info-text);    }

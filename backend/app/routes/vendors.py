@@ -8,6 +8,16 @@ import uuid
 
 vendors_bp = Blueprint('vendors', __name__)
 
+# Vendor category is the *profession* — kept distinct from a community
+# issue's category (the *problem type*, see complaints.py VALID_CATEGORIES).
+# This list is fixed by the DB model's Enum('vendor_categories') column —
+# SQLAlchemy validates every value read back from the DB against this exact
+# list (LookupError otherwise), so it can't be widened without a model
+# change. Issue categories with no matching profession (security,
+# gardening, pest_control) are mapped to 'other' at the frontend instead
+# — see ISSUE_TO_VENDOR_CATEGORY in SecComplaintsView.vue.
+VALID_VENDOR_CATEGORIES = ('plumber', 'electrician', 'carpenter', 'cleaner', 'other')
+
 
 # ── helper ────────────────────────────────────────────────────
 
@@ -77,9 +87,8 @@ def add_vendor():
     if not name or not phone or not category:
         return jsonify({'error': 'name, phone and category are required'}), 400
 
-    valid_categories = ('plumber', 'electrician', 'carpenter', 'cleaner', 'other')
-    if category not in valid_categories:
-        return jsonify({'error': f'category must be one of {valid_categories}'}), 400
+    if category not in VALID_VENDOR_CATEGORIES:
+        return jsonify({'error': f'category must be one of {VALID_VENDOR_CATEGORIES}'}), 400
 
     vendor = Vendor(
         id=str(uuid.uuid4()),
@@ -115,7 +124,10 @@ def edit_vendor(vendor_id):
 
     if 'name'          in data: vendor.name          = data['name'].strip()
     if 'phone'         in data: vendor.phone         = data['phone'].strip()
-    if 'category'      in data: vendor.category      = data['category']
+    if 'category'      in data:
+        if data['category'] not in VALID_VENDOR_CATEGORIES:
+            return jsonify({'error': f'category must be one of {VALID_VENDOR_CATEGORIES}'}), 400
+        vendor.category = data['category']
     if 'description'   in data: vendor.description   = data['description']
     if 'working_hours' in data: vendor.working_hours = data['working_hours']
     if 'status'        in data: vendor.status        = data['status']

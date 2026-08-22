@@ -112,6 +112,48 @@ def create_bill():
     }), 201
 
 
+# ── POST /api/electricity-bills/<id>/retry-analysis — manual on-demand retry ─
+# Analysis normally runs synchronously inside POST /electricity-bills at
+# upload time. If that one attempt fails (timeout, rate limit, etc.) nothing
+# ever revisits it automatically until the scheduler's next sweep. This lets
+# the secretary force an immediate retry instead of waiting — but only when
+# ai_analysis is still None, so a bill that already has a good analysis can
+# never be overwritten by a stray click.
+
+@electricity_bills_bp.route('/<bill_id>/retry-analysis', methods=['POST'])
+@login_required
+def retry_analysis(bill_id):
+    if current_user.role != 'secretary':
+        return jsonify({'error': 'Only secretary can retry bill analysis'}), 403
+
+    bill = ElectricityBill.query.get_or_404(bill_id)
+
+    if bill.ai_analysis:
+        return jsonify({'message': 'Analysis already available', 'bill': bill_to_dict(bill)}), 200
+
+    previous_bills = (
+        ElectricityBill.query
+        .filter(ElectricityBill.id != bill.id)
+        .order_by(ElectricityBill.month.desc())
+        .limit(3)
+        .all()
+    )
+
+    bill.ai_analysis = analyze_electricity_bill(
+        {'month': bill.month.isoformat(), 'total_units': float(bill.total_units), 'total_amount': float(bill.total_amount)},
+        [
+            {'month': b.month.isoformat(), 'total_units': float(b.total_units), 'total_amount': float(b.total_amount)}
+            for b in previous_bills
+        ],
+    )
+    db.session.commit()
+
+    return jsonify({
+        'message': 'Analysis still unavailable' if not bill.ai_analysis else 'Analysis generated',
+        'bill':    bill_to_dict(bill),
+    }), 200
+
+
 # ── GET /api/electricity-bills/<id>/analysis — stored AI analysis ─
 
 @electricity_bills_bp.route('/<bill_id>/analysis', methods=['GET'])

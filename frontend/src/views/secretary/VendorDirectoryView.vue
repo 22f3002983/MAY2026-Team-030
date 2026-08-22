@@ -1,10 +1,15 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { digitsOnly, toStoredPhone, extractDigits, formatPhoneDisplay } from '../../utils/phone'
 
 /* ---------------------------------------------------------------
    Vendor Management — Secretary-owned.
 --------------------------------------------------------------- */
 
+// Fixed by the DB model's Enum column — can't add values without a model
+// change. Issue categories with no matching profession (security,
+// gardening, pest_control) map to 'other' instead — see
+// ISSUE_TO_VENDOR_CATEGORY below.
 const categories = ['all', 'plumber', 'electrician', 'carpenter', 'cleaner', 'other']
 const statusOptions = ['active', 'inactive']
 
@@ -72,9 +77,17 @@ const emptyForm = () => ({
 const form = ref(emptyForm())
 const formError = ref('')
 
+// ── Phone: fixed +91 prefix, digits-only, max 10 ────────────────────
+const phoneDigits = ref('')
+
+function onPhoneInput(e) {
+  phoneDigits.value = digitsOnly(e.target.value)
+}
+
 function openAddForm() {
   editingId.value = null
   form.value = emptyForm()
+  phoneDigits.value = ''
   formError.value = ''
   showAddForm.value = true
 }
@@ -82,6 +95,7 @@ function openAddForm() {
 function openEditForm(vendor) {
   editingId.value = vendor.id
   form.value = { ...vendor }
+  phoneDigits.value = extractDigits(vendor.phone)
   formError.value = ''
   showAddForm.value = true
 }
@@ -93,8 +107,12 @@ function closeForm() {
 async function saveVendor() {
   formError.value = ''
 
-  if (!form.value.name.trim() || !form.value.phone.trim() || !form.value.category) {
-    formError.value = 'Name, phone and category are required'
+  if (!form.value.name.trim() || !form.value.category) {
+    formError.value = 'Name and category are required'
+    return
+  }
+  if (phoneDigits.value.length !== 10) {
+    formError.value = 'Enter a valid 10-digit phone number'
     return
   }
   if (form.value.is_salaried && (!form.value.salary || Number(form.value.salary) <= 0)) {
@@ -104,6 +122,7 @@ async function saveVendor() {
 
   const payload = {
     ...form.value,
+    phone: toStoredPhone(phoneDigits.value),
     salary: form.value.is_salaried ? Number(form.value.salary) : null,
   }
 
@@ -361,7 +380,7 @@ function showToast(text) {
         <div class="card-body">
           <div class="info-row">
             <span class="info-label">Phone</span>
-            <span class="info-value">{{ vendor.phone }}</span>
+            <span class="info-value">{{ formatPhoneDisplay(vendor.phone) || vendor.phone }}</span>
           </div>
           <div class="info-row">
             <span class="info-label">Hours</span>
@@ -405,7 +424,18 @@ function showToast(text) {
           <input v-model="form.name" type="text" placeholder="Vendor or business name" class="n-input" />
 
           <label>Phone *</label>
-          <input v-model="form.phone" type="text" placeholder="+91 98XXX XXXXX" class="n-input" />
+          <div class="phone-input-group">
+            <span class="phone-prefix">+91</span>
+            <input
+              :value="phoneDigits"
+              @input="onPhoneInput"
+              type="text"
+              inputmode="numeric"
+              maxlength="10"
+              placeholder="98XXXXXXXX"
+              class="n-input phone-input"
+            />
+          </div>
 
           <label>Category *</label>
           <select v-model="form.category" class="n-input">
@@ -452,7 +482,7 @@ function showToast(text) {
         <div class="modal-header">
           <div>
             <h3>{{ detailVendor?.name }}</h3>
-            <span class="modal-sub">{{ detailVendor?.category }} · {{ detailVendor?.phone }}</span>
+            <span class="modal-sub">{{ detailVendor?.category }} · {{ formatPhoneDisplay(detailVendor?.phone) || detailVendor?.phone }}</span>
           </div>
           <button class="close-btn" @click="closeVendorDetail">✕</button>
         </div>
@@ -937,6 +967,30 @@ label {
 
 .n-input:focus {
   border-color: var(--c-600);
+}
+
+.phone-input-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.phone-prefix {
+  height: 42px;
+  margin-top: 6px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  border: 1.5px solid var(--color-border-soft);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-soft);
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.phone-input {
+  flex: 1;
 }
 
 .error-msg {

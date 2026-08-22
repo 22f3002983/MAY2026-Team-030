@@ -120,6 +120,50 @@ def mark_expired_visitors(flask_app):
         print(f' * Marked {len(expired)} visitor pass(es) as expired', flush=True)
 
 
+def retry_pending_ai_suggestions(flask_app):
+    """Runs every 5 minutes. AI category/priority are normally set once, in a
+    background thread, right when a complaint is created (see
+    _run_ai_suggestions in routes/complaints.py) — but that's a single
+    best-effort attempt with no retry of its own, so a transient failure
+    (rate limit, timeout, momentary API hiccup) leaves ai_suggested_category
+    / ai_suggested_priority permanently None with nothing to revisit them.
+
+    This only ever looks at issues where a field is still None — it never
+    re-queries or overwrites one that already has a value, so a working
+    suggestion is never touched twice and this costs nothing beyond the
+    complaints that are actually stuck. Only open/in_progress issues are
+    retried; resolved/closed ones aren't worth spending an API call on."""
+    from app.extensions import db
+    from app.models.community_issue import CommunityIssue
+    from app.routes.complaints import VALID_CATEGORIES
+    from app.services.ai_category import suggest_category
+    from app.services.ai_priority import suggest_priority
+
+    with flask_app.app_context():
+        stuck = CommunityIssue.query.filter(
+            CommunityIssue.status.in_(['open', 'in_progress']),
+            db.or_(
+                CommunityIssue.ai_suggested_category.is_(None),
+                CommunityIssue.ai_suggested_priority.is_(None),
+            ),
+        ).limit(20).all()  # capped per run so a bad backlog can't burst-call the API
+
+        if not stuck:
+            return
+
+        retried = 0
+        for issue in stuck:
+            text = f'{issue.title}. {issue.description}'
+            if issue.ai_suggested_category is None:
+                issue.ai_suggested_category = suggest_category(text, VALID_CATEGORIES)
+            if issue.ai_suggested_priority is None:
+                issue.ai_suggested_priority = suggest_priority(issue.title, issue.description, issue.category)
+            retried += 1
+
+        db.session.commit()
+        print(f' * Retried AI suggestions for {retried} stuck issue(s)', flush=True)
+
+
 def start_scheduler(flask_app):
     """Start the background scheduler once per running process.
 
@@ -159,9 +203,18 @@ def start_scheduler(flask_app):
         replace_existing=True,
     )
 
+    scheduler.add_job(
+        func=lambda: retry_pending_ai_suggestions(flask_app),
+        trigger='interval',
+        minutes=5,
+        id='retry_pending_ai_suggestions',
+        replace_existing=True,
+    )
+
     scheduler.start()
     print(' * Amenity auto-release scheduler started (every 5 min)', flush=True)
     print(' * Dues auto-generation scheduler started (daily, checks from the 5th)', flush=True)
     print(' * Visitor pass expiry scheduler started (every 5 min)', flush=True)
+    print(' * Stuck AI suggestion retry scheduler started (every 5 min)', flush=True)
 
     atexit.register(lambda: scheduler.shutdown(wait=False) if scheduler.running else None)

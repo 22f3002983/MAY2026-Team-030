@@ -253,7 +253,7 @@ function autoAssignVendor() {
   const loadOf = (v) => requests.value.filter(r => r.vendor === v.name && r.status === 'Scheduled').length
   const best = [...candidates].sort((a, b) => loadOf(a) - loadOf(b))[0]
   formVendor.value = best.name
-  aiNote.value = `AI suggested ${best.name} · usually takes about ${estimatedDuration.value}`
+  aiNote.value = `You can choose ${best.name} · usually takes about ${estimatedDuration.value}`
 }
 
 const canSubmit = computed(() =>

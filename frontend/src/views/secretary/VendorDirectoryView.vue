@@ -1,16 +1,21 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { digitsOnly, toStoredPhone, extractDigits, formatPhoneDisplay } from '../../utils/phone'
+import api from '../../api/axios'
 
 /* ---------------------------------------------------------------
    Vendor Management — Secretary-owned.
 --------------------------------------------------------------- */
 
-// Fixed by the DB model's Enum column — can't add values without a model
-// change. Issue categories with no matching profession (security,
-// gardening, pest_control) map to 'other' instead — see
-// ISSUE_TO_VENDOR_CATEGORY below.
-const categories = ['all', 'plumber', 'electrician', 'carpenter', 'cleaner', 'other']
+// Matches CommunityIssue.category exactly (same DB enum values as
+// complaints/issues) — see migrate_vendor_categories.py for the one-time
+// data migration that backfilled existing vendor rows to these values.
+const categories = ['all', 'plumbing', 'electrical', 'cleaning', 'carpentry', 'security', 'gardening', 'pest_control', 'other']
+
+// stored value -> display label ('pest_control' -> 'Pest Control')
+function categoryLabel(cat) {
+  return cat ? cat.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : cat
+}
 const statusOptions = ['active', 'inactive']
 
 const searchQuery = ref('')
@@ -18,15 +23,13 @@ const filterCategory = ref('all')
 const filterPayType = ref('all')     // 'all' | 'salaried' | 'not_salaried'
 const filterStatus = ref('all')      // 'all' | 'active' | 'inactive' | 'blacklisted'
 const showAddForm = ref(false)
-const API = 'http://localhost:5000/api'
 
 // mock data - replace with API call in Sprint 1
 const vendors = ref([])
 
 async function fetchVendors() {
-  const res = await fetch(`${API}/vendors?status=`, { credentials: 'include' })
-  const data = await res.json()
-  vendors.value = data.vendors || []
+  const res = await api.get('/vendors', { params: { status: '' } })
+  vendors.value = res.data.vendors || []
 }
 
 onMounted(() => {
@@ -39,10 +42,13 @@ onMounted(() => {
 const paymentHistory = ref([])
 
 async function fetchPaymentHistory() {
-  const res = await fetch(`${API}/funds/transactions?source=vendor_salary`, { credentials: 'include' })
-  if (!res.ok) return // secretary-only endpoint; silently skip if it 403s
-  const data = await res.json()
-  paymentHistory.value = (data.transactions || []).map(t => ({
+  let res
+  try {
+    res = await api.get('/funds/transactions', { params: { source: 'vendor_salary' } })
+  } catch (err) {
+    return // secretary-only endpoint; silently skip if it 403s
+  }
+  paymentHistory.value = (res.data.transactions || []).map(t => ({
     id: t.id,
     vendorId: t.reference_id,
     amount: t.amount,
@@ -70,7 +76,7 @@ const filteredVendors = computed(() => {
 const editingId = ref(null)
 
 const emptyForm = () => ({
-  name: '', phone: '', category: 'plumber', working_hours: '',
+  name: '', phone: '', category: 'plumbing', working_hours: '',
   status: 'active', is_salaried: false, salary: null,   // was salary
 })
 
@@ -127,18 +133,10 @@ async function saveVendor() {
   }
 
   if (editingId.value) {
-    await fetch(`${API}/vendors/${editingId.value}`, {
-      method: 'PATCH', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
+    await api.patch(`/vendors/${editingId.value}`, payload)
     showToast(`${payload.name} updated`)
   } else {
-    await fetch(`${API}/vendors`, {
-      method: 'POST', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
+    await api.post('/vendors', payload)
     showToast(`${payload.name} added to the directory`)
   }
 
@@ -147,18 +145,14 @@ async function saveVendor() {
 }
 
 async function setStatus(vendor, status) {
-  await fetch(`${API}/vendors/${vendor.id}`, {
-    method: 'PATCH', credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ status }),
-  })
+  await api.patch(`/vendors/${vendor.id}`, { status })
   vendor.status = status
   showToast(`${vendor.name} marked ${status}`)
 }
 async function removeVendor(vendor) {
   const confirmed = window.confirm(`Remove ${vendor.name} from the directory? This can't be undone.`)
   if (!confirmed) return
-  await fetch(`${API}/vendors/${vendor.id}`, { method: 'DELETE', credentials: 'include' })
+  await api.delete(`/vendors/${vendor.id}`)
   vendors.value = vendors.value.filter(v => v.id !== vendor.id)
   showToast(`${vendor.name} removed`)
 }
@@ -246,18 +240,13 @@ async function reviewPayment() {
   paySalariesError.value = ''
   loadingBreakdown.value = true
   try {
-    const res = await fetch(`${API}/vendors/pay-salaries/preview`, {
-      method: 'POST', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ vendor_ids: selectedVendors.value.map(v => v.id) }),
+    const res = await api.post('/vendors/pay-salaries/preview', {
+      vendor_ids: selectedVendors.value.map(v => v.id),
     })
-    const data = await res.json()
-    if (!res.ok) {
-      paySalariesError.value = data.error || 'Failed to preview payment'
-      return
-    }
-    breakdown.value = data
+    breakdown.value = res.data
     paymentStep.value = 'breakdown'
+  } catch (err) {
+    paySalariesError.value = err.response?.data?.error || 'Failed to preview payment'
   } finally {
     loadingBreakdown.value = false
   }
@@ -269,19 +258,10 @@ async function confirmPaySalaries() {
   payingSalaries.value = true
 
   try {
-    const res = await fetch(`${API}/vendors/pay-salaries`, {
-      method: 'POST', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ vendor_ids: selectedVendors.value.map(v => v.id) }),
+    const res = await api.post('/vendors/pay-salaries', {
+      vendor_ids: selectedVendors.value.map(v => v.id),
     })
-    const data = await res.json()
-    if (!res.ok) {
-      paySalariesError.value = data.error || 'Failed to pay salaries'
-      // funds moved under us since the preview (e.g. another payment ran) —
-      // drop back to review so the secretary can re-check the breakdown
-      paymentStep.value = 'review'
-      return
-    }
+    const data = res.data
 
     await fetchPaymentHistory() // pick up the real ledger entries just created
 
@@ -289,6 +269,11 @@ async function confirmPaySalaries() {
     lastPaidTotal.value = data.total_paid
     paymentStep.value = 'done'
     showToast(`Paid ${lastPaidCount.value} vendor(s) · ₹${lastPaidTotal.value.toLocaleString('en-IN')} total`)
+  } catch (err) {
+    paySalariesError.value = err.response?.data?.error || 'Failed to pay salaries'
+    // funds moved under us since the preview (e.g. another payment ran) —
+    // drop back to review so the secretary can re-check the breakdown
+    paymentStep.value = 'review'
   } finally {
     payingSalaries.value = false
   }
@@ -334,7 +319,7 @@ function showToast(text) {
       <div class="filters-row">
         <select v-model="filterCategory" class="filter-select">
           <option value="all">All Categories</option>
-          <option v-for="cat in categories.filter(c => c !== 'all')" :key="cat" :value="cat">{{ cat }}</option>
+          <option v-for="cat in categories.filter(c => c !== 'all')" :key="cat" :value="cat">{{ categoryLabel(cat) }}</option>
         </select>
 
         <select v-model="filterPayType" class="filter-select">
@@ -365,7 +350,7 @@ function showToast(text) {
           </div>
           <div class="vendor-info">
             <span class="vendor-name">{{ vendor.name }}</span>
-            <span class="vendor-category">{{ vendor.category }}</span>
+            <span class="vendor-category">{{ categoryLabel(vendor.category) }}</span>
           </div>
           <span :class="['status-badge', vendor.status]">
             {{ vendor.status }}
@@ -440,7 +425,7 @@ function showToast(text) {
           <label>Category *</label>
           <select v-model="form.category" class="n-input">
             <option v-for="cat in categories.filter(c => c !== 'all')" :key="cat" :value="cat">
-              {{ cat }}
+              {{ categoryLabel(cat) }}
             </option>
           </select>
 
@@ -482,7 +467,7 @@ function showToast(text) {
         <div class="modal-header">
           <div>
             <h3>{{ detailVendor?.name }}</h3>
-            <span class="modal-sub">{{ detailVendor?.category }} · {{ formatPhoneDisplay(detailVendor?.phone) || detailVendor?.phone }}</span>
+            <span class="modal-sub">{{ categoryLabel(detailVendor?.category) }} · {{ formatPhoneDisplay(detailVendor?.phone) || detailVendor?.phone }}</span>
           </div>
           <button class="close-btn" @click="closeVendorDetail">✕</button>
         </div>
@@ -545,7 +530,7 @@ function showToast(text) {
                     @change="toggleSelected(v.id)"
                   />
                   <span class="pay-row-name">{{ v.name }}</span>
-                  <span class="pay-row-cat">{{ v.category }}</span>
+                  <span class="pay-row-cat">{{ categoryLabel(v.category) }}</span>
                   <span class="pay-row-amount">₹{{ v.salary.toLocaleString('en-IN') }}</span>
                 </label>
               </div>

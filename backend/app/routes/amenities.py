@@ -197,6 +197,14 @@ def book_amenity(amenity_id):
     if amenity.status != 'available':
         return jsonify({'error': f'Amenity is currently {amenity.status}'}), 400
 
+    # Locks this amenity's row for the rest of the transaction so a second
+    # concurrent booking request for the same slot has to wait until this
+    # one commits (and then correctly sees it as a conflict) or rolls back
+    # — closes the gap between the conflict check below and the insert.
+    # No-op on SQLite (no row-level locking there), but real protection on
+    # Postgres/MySQL — no schema change needed either way.
+    amenity = Amenity.query.with_for_update().get(amenity_id)
+
     data = request.get_json()
     if not data:
         return jsonify({'error': 'No data provided'}), 400

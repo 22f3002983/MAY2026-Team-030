@@ -6,7 +6,7 @@ with a realistic set of demo data:
 
   • 1 secretary + 1 security guard
   • 6 residents across 4 towers — 3 onboarded, 3 still pending first login
-  • 2 vendors (plumber, electrician)
+  • 2 vendors (plumbing, electrical)
   • 6 amenities (pool, clubhouse, gym, tennis court, garden, community hall)
     + a handful of bookings (auto-approved, pending, and secretary-approved)
   • 6 notices (General / Maintenance / Security / Event / Urgent)
@@ -72,9 +72,9 @@ residents = [
 ]
 
 vendors = [
-    {"name": "Suresh Plumbing Works", "phone": "9900011122", "category": "plumber",
+    {"name": "Suresh Plumbing Works", "phone": "9900011122", "category": "plumbing",
      "description": "General plumbing repairs and installations", "working_hours": "9 AM - 7 PM"},
-    {"name": "Bright Spark Electricals", "phone": "9900011133", "category": "electrician",
+    {"name": "Bright Spark Electricals", "phone": "9900011133", "category": "electrical",
      "description": "Electrical wiring, fixtures and repairs", "working_hours": "10 AM - 6 PM"},
 ]
 
@@ -406,7 +406,7 @@ def seed_complaints(secretary_session, resident_sessions, vendor_ids):
     # 2) assign the streetlight issue (2 reporters) to the electrician and
     #    move it to in_progress
     streetlight_ids = by_title.get("Streetlight not working near Tower C", [])
-    electrician_id = vendor_ids.get("electrician")
+    electrician_id = vendor_ids.get("electrical")
     if streetlight_ids and electrician_id:
         complaint_id = streetlight_ids[0]
         r = secretary_session.patch(f"{BASE}/complaints/{complaint_id}/assign",

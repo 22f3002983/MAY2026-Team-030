@@ -13,10 +13,16 @@ vendors_bp = Blueprint('vendors', __name__)
 # This list is fixed by the DB model's Enum('vendor_categories') column —
 # SQLAlchemy validates every value read back from the DB against this exact
 # list (LookupError otherwise), so it can't be widened without a model
-# change. Issue categories with no matching profession (security,
-# gardening, pest_control) are mapped to 'other' at the frontend instead
-# — see ISSUE_TO_VENDOR_CATEGORY in SecComplaintsView.vue.
-VALID_VENDOR_CATEGORIES = ('plumber', 'electrician', 'carpenter', 'cleaner', 'other')
+# change.
+# Vendor category now matches CommunityIssue.category exactly (see
+# app/models/community_issue.py) — same 8 values, same spellings — so a
+# vendor's category can be compared directly against an issue's category
+# with no translation layer needed. Previously this used profession words
+# ('plumber', 'electrician', ...) which didn't line up 1:1 with issue
+# categories ('plumbing', 'electrical', ...) and had no category at all
+# for security/gardening/pest_control — this migration (see
+# migrate_vendor_categories.py) backfills existing rows to the new values.
+VALID_VENDOR_CATEGORIES = ('plumbing', 'electrical', 'cleaning', 'carpentry', 'security', 'gardening', 'pest_control', 'other')
 
 
 # ── helper ────────────────────────────────────────────────────

@@ -33,15 +33,14 @@ def resident_client(app):
 
 
 def test_chat_requires_login(app):
-    # flask_login's login_manager.login_view is set app-wide, so an
-    # unauthenticated request to any @login_required route 302-redirects
-    # rather than returning a 401 JSON body — same behavior every other
-    # route in this app already has (see the pre-existing 302-vs-200/401
-    # failures in test_notices.py/test_vendors.py), not something specific
-    # to this endpoint.
+    # app.extensions registers a custom unauthorized_handler that returns
+    # a 401 JSON body instead of flask-login's default 302 redirect, so
+    # unauthenticated requests to any @login_required route get a 401 —
+    # same app-wide behavior as every other route, not specific to this
+    # endpoint.
     c = app.test_client()
     res = c.post('/api/ai-assistant/chat', json={'message': 'hello'})
-    assert res.status_code == 302
+    assert res.status_code == 401
 
 
 
@@ -142,6 +141,3 @@ def test_resident_system_prompt_differs_from_secretary(app):
         secretary_prompt = ai_navigation.build_system_prompt('secretary')
         assert '/sec/electricity' not in resident_prompt
         assert '/services' in resident_prompt
-
-
-

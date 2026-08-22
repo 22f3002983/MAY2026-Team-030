@@ -1,5 +1,5 @@
 def add_vendor(client, **overrides):
-    payload = {'name': 'Kishore Plumbing', 'phone': '9900011122', 'category': 'plumber'}
+    payload = {'name': 'Kishore Plumbing', 'phone': '9900011122', 'category': 'plumbing'}
     payload.update(overrides)
     return client.post('/api/vendors', json=payload)
 

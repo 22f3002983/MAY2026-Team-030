@@ -70,12 +70,13 @@ function asUtcIso(s) {
 }
 
 
-// a vendor's category is the *profession* ('plumber'); an issue's category is
-// the *problem type* ('plumbing') — different enums, so assigning a vendor
-// needs this explicit mapping to find who's actually suited to the job
+// vendor.category now matches CommunityIssue.category exactly (same DB
+// enum values) — this just lower-cases the capitalized display label back
+// to the stored value ('Pest Control' -> 'pest_control'); no more picking
+// a different vendor profession for a given issue type.
 const ISSUE_TO_VENDOR_CATEGORY = {
-  Plumbing: 'plumber', Electrical: 'electrician', Carpentry: 'carpenter',
-  Cleaning: 'cleaner', Security: 'security', Gardening: 'gardener',
+  Plumbing: 'plumbing', Electrical: 'electrical', Carpentry: 'carpentry',
+  Cleaning: 'cleaning', Security: 'security', Gardening: 'gardening',
   'Pest Control': 'pest_control', Other: 'other',
 }
 

@@ -93,7 +93,7 @@ function formatDate(iso) {
 }
 
 function downloadFile(r) {
-  window.open(`http://localhost:5000/api/document-requests/${r.id}/download`, '_blank')
+  window.open(`${api.defaults.baseURL}/document-requests/${r.id}/download`, '_blank')
 }
 </script>
 

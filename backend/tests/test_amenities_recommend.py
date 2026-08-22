@@ -32,13 +32,14 @@ def resident_client(app):
 
 
 def test_recommend_requires_login(app):
-    # flask_login's login_manager.login_view is set app-wide, so an
-    # unauthenticated request to any @login_required route 302-redirects
-    # rather than returning a 401 JSON body — same app-wide behavior as
-    # every other route, not specific to this endpoint.
+    # app.extensions registers a custom unauthorized_handler that returns
+    # a 401 JSON body instead of flask-login's default 302 redirect, so
+    # unauthenticated requests to any @login_required route get a 401 —
+    # same app-wide behavior as every other route, not specific to this
+    # endpoint.
     c = app.test_client()
     res = c.post('/api/amenities/recommend', json={'query': 'pool'})
-    assert res.status_code == 302
+    assert res.status_code == 401
 
 
 
@@ -129,6 +130,3 @@ def test_recommend_works_for_secretary_role_too(secretary_client, monkeypatch):
     res = secretary_client.post('/api/amenities/recommend', json={'query': 'somewhere to work out'})
     assert res.status_code == 200
     assert res.get_json() == {'recommendation': 'The Gym would suit you.'}
-
-
-

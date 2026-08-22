@@ -6,7 +6,7 @@ class Vendor(db.Model):
     id           = db.Column(db.String(36), primary_key=True, default=lambda: str(__import__('uuid').uuid4()))
     name         = db.Column(db.String(100), nullable=False)
     phone        = db.Column(db.String(20),  nullable=False)
-    category     = db.Column(db.Enum('plumber', 'electrician', 'carpenter', 'cleaner', 'other', name='vendor_categories'), nullable=False)
+    category     = db.Column(db.Enum('plumbing', 'electrical', 'cleaning', 'carpentry', 'security', 'gardening', 'pest_control', 'other', name='vendor_categories'), nullable=False)
     description  = db.Column(db.Text, nullable=True)
     working_hours= db.Column(db.String(50), nullable=True)
     status       = db.Column(db.Enum('active', 'inactive', name='vendor_status'), default='active')

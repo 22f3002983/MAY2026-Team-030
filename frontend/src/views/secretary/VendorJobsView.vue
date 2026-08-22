@@ -1,8 +1,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { formatPhoneDisplay } from '../../utils/phone'
-
-const API = 'http://localhost:5000/api'
+import api from '../../api/axios'
 
 const filterStatus = ref('all')
 const searchQuery = ref('')
@@ -15,6 +14,8 @@ const statuses = ['all', 'assigned', 'in_progress', 'completed', 'declined']
    /api/complaints and /api/vendors endpoints SecComplaintsView.vue uses. */
 
 function capitalize(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s }
+// 'pest_control' -> 'Pest Control' — vendor.category can contain underscores now
+function categoryLabel(s) { return s ? s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : s }
 
 // backend datetimes come back naive but are always UTC instants (no 'Z') —
 // tag them explicitly so `new Date(...)` doesn't misread them as local time
@@ -43,9 +44,8 @@ function jobStatus(issue) {
 const vendors = ref([])
 
 async function fetchVendors() {
-  const res = await fetch(`${API}/vendors?status=`, { credentials: 'include' })
-  const data = await res.json()
-  vendors.value = data.vendors || []
+  const res = await api.get('/vendors', { params: { status: '' } })
+  vendors.value = res.data.vendors || []
 }
 
 function vendorById(id) {
@@ -55,9 +55,8 @@ function vendorById(id) {
 const jobs = ref([])
 
 async function fetchJobs() {
-  const res = await fetch(`${API}/complaints`, { credentials: 'include' })
-  const data = await res.json()
-  jobs.value = (data.complaints || [])
+  const res = await api.get('/complaints')
+  jobs.value = (res.data.complaints || [])
     .filter(i => i.vendor_id)
     .map(i => {
       const vendor = vendorById(i.vendor_id)
@@ -66,7 +65,7 @@ async function fetchJobs() {
         location: i.location || '—',
         // the vendor's profession (plumber, electrician, ...) reads better
         // here than the issue's problem-type category (plumbing, electrical)
-        category: vendor ? capitalize(vendor.category) : capitalize(i.category),
+        category: vendor ? categoryLabel(vendor.category) : capitalize(i.category),
         description: i.description,
         vendor_name: vendor ? vendor.name : '—',
         vendor_phone: vendor ? (formatPhoneDisplay(vendor.phone) || '—') : '—',

@@ -37,8 +37,7 @@ def test_register_duplicate_email(client):
 
 
 def test_me_requires_login(client):
-    # flask-login's default unauthorized handler redirects (no custom JSON
-    # handler is registered), so an unauthenticated request never reaches
-    # the view — it gets bounced to the login route instead of 401/403.
+    # app.extensions registers a custom unauthorized_handler that returns
+    # a 401 JSON body instead of flask-login's default 302 redirect.
     r = client.get('/api/auth/me')
-    assert r.status_code == 302
+    assert r.status_code == 401

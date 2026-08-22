@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useAuthStore } from '../../stores/auth'
 import api from '../../api/axios'
+import { digitsOnly, toStoredPhone, extractDigits, formatPhoneDisplay } from '../../utils/phone'
 
 const auth = useAuthStore()
 
@@ -43,6 +44,8 @@ const initials = computed(() =>
 
 function startEdit() {
   draft.value  = { ...profile.value }
+  phoneDigits.value = extractDigits(profile.value.phone)
+  saveError.value = ''
   isEditing.value = true
 }
 
@@ -50,11 +53,23 @@ function cancelEdit() {
   isEditing.value = false
 }
 
+const phoneDigits = ref('')
+const saveError = ref('')
+
+function onPhoneInput(e) {
+  phoneDigits.value = digitsOnly(e.target.value)
+}
+
 async function saveEdit() {
+  saveError.value = ''
+  if (phoneDigits.value.length !== 10) {
+    saveError.value = 'Enter a valid 10-digit phone number'
+    return
+  }
   try {
     await api.patch('/profile', {
       name: draft.value.name,
-      phone: draft.value.phone,
+      phone: toStoredPhone(phoneDigits.value),
       household_size: draft.value.members,
       vehicle1_name: draft.value.vehicle1,
       vehicle1_number: draft.value.vehicle1_no,
@@ -66,7 +81,7 @@ async function saveEdit() {
     successMsg.value = 'Profile updated successfully.'
     setTimeout(() => successMsg.value = '', 5000)
   } catch (err) {
-    successMsg.value = err.response?.data?.error || 'Could not save changes'
+    saveError.value = err.response?.data?.error || 'Could not save changes'
   }
 }
 
@@ -170,7 +185,7 @@ const personalFields = computed(() => [
   { key: 'Full name',   value: profile.value.name,    field: 'name' },
   { key: 'Flat number', value: profile.value.flat,    field: 'flat' },
   { key: 'Email',       value: profile.value.email,   field: 'email' },
-  { key: 'Phone',       value: profile.value.phone,   field: 'phone' },
+  { key: 'Phone',       value: formatPhoneDisplay(profile.value.phone) || profile.value.phone, field: 'phone' },
   { key: 'Members',     value: profile.value.members, field: 'members' },
 ])
 
@@ -253,12 +268,25 @@ const readonlyFields = ['flat', 'email']
 
         <!-- edit mode -->
         <template v-else>
+          <div v-if="saveError" class="pw-error">{{ saveError }}</div>
           <div class="fields-section">
             <span class="section-label">Personal</span>
             <div class="edit-grid">
               <div v-for="field in personalFields" :key="field.field" class="edit-field">
                 <label>{{ field.key }}</label>
+                <div v-if="field.field === 'phone'" class="phone-input-group">
+                  <span class="phone-prefix">+91</span>
+                  <input
+                    :value="phoneDigits"
+                    @input="onPhoneInput"
+                    type="text"
+                    inputmode="numeric"
+                    maxlength="10"
+                    class="n-input phone-input"
+                  />
+                </div>
                 <input
+                  v-else
                   v-model="draft[field.field]"
                   :disabled="readonlyFields.includes(field.field)"
                   :class="['n-input', { 'n-disabled': readonlyFields.includes(field.field) }]"
@@ -698,6 +726,29 @@ label {
   background: var(--color-bg);
   color: var(--color-text-muted);
   cursor: not-allowed;
+}
+
+.phone-input-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.phone-prefix {
+  height: 42px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  border: 1.5px solid var(--color-border-soft);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-soft);
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.phone-input {
+  flex: 1;
 }
 
 @media (max-width: 720px) {

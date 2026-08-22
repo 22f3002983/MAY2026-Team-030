@@ -243,6 +243,27 @@ paths:
         '401': { description: Current password incorrect }
 
 
+  /api/auth/change-email:
+    post:
+      tags: [auth]
+      summary: Change the current user's email
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [new_email, current_password]
+              properties:
+                new_email: { type: string, format: email }
+                current_password: { type: string }
+      responses:
+        '200': { description: Email updated }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { description: Current password incorrect }
+        '409': { description: Email already in use }
+
+
   # ── complaints ────────────────────────────────────────────────
   /api/complaints:
     post:
@@ -457,6 +478,21 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
 
 
+  /api/complaints/{complaint_id}/retry-ai:
+    post:
+      tags: [complaints]
+      summary: Retry AI category/priority suggestions for an issue (secretary only)
+      description: |
+        Only fills in whichever of ai_suggested_category / ai_suggested_priority
+        is still missing — does not overwrite a suggestion that's already set.
+      parameters:
+        - { name: complaint_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Suggestions updated (or left as-is if already present) }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+
   /api/complaints/{complaint_id}/merge:
     post:
       tags: [complaints]
@@ -642,7 +678,7 @@ paths:
               properties:
                 name: { type: string }
                 phone: { type: string }
-                category: { type: string, enum: [plumber, electrician, carpenter, cleaner, other] }
+                category: { type: string, enum: [plumbing, electrical, cleaning, carpentry, security, gardening, pest_control, other] }
                 description: { type: string }
                 working_hours: { type: string }
                 is_salaried: { type: boolean }
@@ -704,6 +740,55 @@ paths:
         '200': { description: Vendor status toggled }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+
+  /api/vendors/pay-salaries/preview:
+    post:
+      tags: [vendors]
+      summary: Dry-run a salary payment across salaried vendors (secretary only)
+      description: |
+        Shows exactly which fund(s) the payment would come from — operating
+        first, then contingency, then sinking if still short — without
+        writing anything to the database.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [vendor_ids]
+              properties:
+                vendor_ids: { type: array, items: { type: string } }
+      responses:
+        '200': { description: Fund breakdown for the proposed payment, including any shortfall }
+        '400': { description: Missing vendor_ids, unknown vendor, non-salaried vendor, or inactive vendor }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Vendor not found }
+
+
+  /api/vendors/pay-salaries:
+    post:
+      tags: [vendors]
+      summary: Pay one or more salaried vendors (secretary only)
+      description: |
+        Recomputes the same fallback plan the preview shows and executes
+        it: draws from operating first, then contingency, then sinking if
+        needed, splitting a single vendor's salary across funds if one
+        runs out mid-payment. Every draw is written to the funds ledger.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [vendor_ids]
+              properties:
+                vendor_ids: { type: array, items: { type: string } }
+      responses:
+        '201': { description: Vendors paid }
+        '400': { description: Missing vendor_ids, unknown/non-salaried/inactive vendor, or insufficient funds across all three funds }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Vendor not found }
 
 
   # ── notices ───────────────────────────────────────────────────
@@ -1954,6 +2039,22 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
 
 
+  /api/electricity-bills/{bill_id}/retry-analysis:
+    post:
+      tags: [electricity-bills]
+      summary: Retry generating the AI usage analysis for a bill (secretary only)
+      description: |
+        No-op if ai_analysis is already stored — returns it as-is instead
+        of regenerating. Otherwise re-runs the comparison against the 3
+        most recent other bills on record.
+      parameters:
+        - { name: bill_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Analysis generated (or already available / still unavailable) }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+
   /api/electricity-bills/{bill_id}/analysis:
     get:
       tags: [electricity-bills]
@@ -2401,4 +2502,3 @@ paths:
                 properties:
                   reply: { type: string }
         '400': { $ref: '#/components/responses/BadRequest' }
-

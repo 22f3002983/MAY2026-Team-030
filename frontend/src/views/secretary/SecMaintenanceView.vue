@@ -118,7 +118,7 @@ async function refreshFunds() {
 }
 
 function downloadReceipt(due) {
-  window.open(`http://localhost:5000/api/dues/${due.id}/receipt`, '_blank')
+  window.open(`${api.defaults.baseURL}/dues/${due.id}/receipt`, '_blank')
 }
 
 // ── generate dues ──────────────────────────────────────────

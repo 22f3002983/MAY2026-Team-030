@@ -18,7 +18,9 @@ const currentResident = computed(() => ({
 const categoryOptions = ['Plumbing', 'Electrical', 'Carpentry', 'Cleaning', 'Other']
 
 // backend uses profession words, frontend uses problem-type words — these
-// are NOT interchangeable via simple casing, need an explicit map both ways
+// are NOT interchangeable via simple casing, need an explicit map both ways.
+// This pair is for ServiceRequest.category specifically (the category
+// stored on the resident's own request) — unrelated to vendor.category.
 const CATEGORY_TO_BACKEND = {
   Plumbing: 'plumber', Electrical: 'electrician', Carpentry: 'carpenter',
   Cleaning: 'cleaner', Other: 'other',
@@ -26,6 +28,14 @@ const CATEGORY_TO_BACKEND = {
 const CATEGORY_TO_FRONTEND = {
   plumber: 'Plumbing', electrician: 'Electrical', carpenter: 'Carpentry',
   cleaner: 'Cleaning', other: 'Other',
+}
+
+// vendor.category now matches CommunityIssue.category exactly (problem-type
+// words, not professions) — a separate map from CATEGORY_TO_BACKEND above,
+// used only for filtering which vendors show up for a given UI category.
+const CATEGORY_TO_VENDOR_CATEGORY = {
+  Plumbing: 'plumbing', Electrical: 'electrical', Carpentry: 'carpentry',
+  Cleaning: 'cleaning', Other: 'other',
 }
 
 const estimatedMinutesByCategory = {
@@ -65,7 +75,7 @@ const vendors = ref([])
 async function fetchVendors() {
   try {
     const res = await api.get('/vendors', { params: { status: 'active' } })
-    const serviceCategories = new Set(Object.keys(CATEGORY_TO_FRONTEND))
+    const serviceCategories = new Set(Object.values(CATEGORY_TO_VENDOR_CATEGORY))
     vendors.value = (res.data.vendors || [])
       .filter(v => serviceCategories.has(v.category))
       .map(v => ({ id: v.id, name: v.name, category: v.category }))
@@ -75,8 +85,8 @@ async function fetchVendors() {
 }
 
 function vendorsForCategory(frontendCat) {
-  const backendCat = CATEGORY_TO_BACKEND[frontendCat]
-  return vendors.value.filter(v => v.category === backendCat)
+  const vendorCat = CATEGORY_TO_VENDOR_CATEGORY[frontendCat]
+  return vendors.value.filter(v => v.category === vendorCat)
 }
 
 /* ---------------- Requests ---------------- */
@@ -253,7 +263,7 @@ function autoAssignVendor() {
   const loadOf = (v) => requests.value.filter(r => r.vendor === v.name && r.status === 'Scheduled').length
   const best = [...candidates].sort((a, b) => loadOf(a) - loadOf(b))[0]
   formVendor.value = best.name
-  aiNote.value = `You can choose ${best.name} · usually takes about ${estimatedDuration.value}`
+  aiNote.value = `AI suggested ${best.name} · usually takes about ${estimatedDuration.value}`
 }
 
 const canSubmit = computed(() =>

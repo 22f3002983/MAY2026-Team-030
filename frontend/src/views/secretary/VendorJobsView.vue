@@ -189,7 +189,7 @@ function whatsappLabel(status) {
             <th>Category</th>
             <th>Description</th>
             <th>Vendor</th>
-            <th>WhatsApp</th>
+            <th>Telegram</th>
             <th>Deadline</th>
             <th>Status</th>
           </tr>

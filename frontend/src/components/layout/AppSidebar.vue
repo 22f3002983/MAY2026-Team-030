@@ -54,9 +54,9 @@ function isActive(path) {
   return route.path === path || route.path.startsWith(path + '/')
 }
 
-function logout() {
-  auth.logout()
-  router.push('/')
+async function logout() {
+  await auth.logout()
+  router.push('/login')
 }
 
 function goHome() {

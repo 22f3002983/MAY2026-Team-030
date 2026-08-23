@@ -44,29 +44,48 @@ def _last_known_amount():
 
 
 def generate_due_for_new_resident(resident):
-    """Called right after a resident is created (see auth.register). If
-    they're joining before/mid the current month, give them a due for
-    the current month immediately using the most recently generated
-    month's amount, instead of waiting for the next generation cycle.
-    No-ops if no dues have ever been generated yet, or if a due already
-    exists for them this month."""
+    """Called right after a resident is created (see auth.register). Backfills
+    a due for every month that's already been generated for other residents
+    — the current month, and any future months the secretary pre-generated
+    in advance — instead of only covering the current month. Without this,
+    a resident who joins after a future month's batch was created would be
+    silently missing from that month's dues (and its pending/collected
+    counts) until someone manually re-ran "Generate Dues" for it.
+    No-ops if no dues have ever been generated yet, or for any month that
+    already has a due for this resident."""
     current_month = date.today().replace(day=1)
 
-    if Dues.query.filter_by(resident_id=resident.id, month=current_month).first():
+    # every distinct month that already has at least one due generated,
+    # restricted to the current month or later — we don't want to backfill
+    # past months the resident wasn't part of the society for.
+    existing_months = [
+        row[0] for row in db.session.query(Dues.month).filter(
+            Dues.month >= current_month
+        ).distinct().all()
+    ]
+    if not existing_months:
         return
 
     amount = _last_known_amount()
     if amount is None:
         return
 
-    db.session.add(Dues(
-        id=str(uuid.uuid4()),
-        resident_id=resident.id,
-        month=current_month,
-        amount_due=amount,
-        amount_paid=0,
-    ))
-    db.session.commit()
+    created_any = False
+    for month in existing_months:
+        if Dues.query.filter_by(resident_id=resident.id, month=month).first():
+            continue
+
+        db.session.add(Dues(
+            id=str(uuid.uuid4()),
+            resident_id=resident.id,
+            month=month,
+            amount_due=amount,
+            amount_paid=0,
+        ))
+        created_any = True
+
+    if created_any:
+        db.session.commit()
 
 
 def generate_receipt_pdf(due):
@@ -272,7 +291,15 @@ def generate_dues():
             amount_paid=0,
         )
         db.session.add(due)
-        created.append(resident.id)
+        created.append(due)
+
+        # in-app only, same wording as the manual reminder endpoint — queued
+        # on the same session so it commits atomically with the due itself
+        create_notification(
+            user_id=resident.user_id,
+            message=f'Maintenance dues reminder: ₹{float(amount_due):.2f} is due for {month.strftime("%B %Y")}',
+            type='dues_reminder',
+        )
 
     db.session.commit()
 
@@ -301,7 +328,19 @@ def mark_paid(due_id):
         return jsonify({'error': 'This due has already been paid'}), 400
 
     data = request.get_json() or {}
-    amount_paid = data.get('amount_paid', float(due.amount_due))
+
+    try:
+        amount_paid = float(data.get('amount_paid', due.amount_due))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'amount_paid must be a number'}), 400
+
+    if amount_paid <= 0:
+        return jsonify({'error': 'amount_paid must be greater than zero'}), 400
+    # can't exceed what's actually owed — this number flows straight into
+    # distribute_payment(), which really credits the funds ledger, so a
+    # client-inflated amount here would fabricate money that was never paid
+    if amount_paid > float(due.amount_due):
+        return jsonify({'error': 'amount_paid cannot exceed the amount due'}), 400
 
     due.amount_paid = amount_paid
     due.paid_date   = datetime.utcnow()

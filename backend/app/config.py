@@ -10,5 +10,21 @@ class Config:
     SESSION_COOKIE_HTTPONLY        = True
     SESSION_COOKIE_SAMESITE        = 'Lax'
 
+    # In-memory SQLite is per-connection: each new connection opens its own
+    # separate, empty database. Without pinning every connection — including
+    # the one opened by the background-AI daemon thread in
+    # app/routes/complaints.py::_run_ai_suggestions — onto a single shared
+    # connection, that thread silently writes into a different (empty)
+    # database than the one the request thread just committed to, which
+    # surfaces as "0 rows matched" / sqlite3.InterfaceError under load.
+    # StaticPool shares one connection across threads; check_same_thread=
+    # False is safe here because StaticPool already serializes access to it.
+    if SQLALCHEMY_DATABASE_URI == 'sqlite:///:memory:':
+        from sqlalchemy.pool import StaticPool
+        SQLALCHEMY_ENGINE_OPTIONS = {
+            'poolclass': StaticPool,
+            'connect_args': {'check_same_thread': False},
+        }
+
     OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
     OPENROUTER_MODEL   = os.getenv('OPENROUTER_MODEL', 'openai/gpt-oss-20b:free')

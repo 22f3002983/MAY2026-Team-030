@@ -44,6 +44,7 @@ def auto_generate_next_month_dues(flask_app):
     from app.extensions import db
     from app.models.dues import Dues
     from app.models.resident import Resident
+    from app.routes.notifications import create_notification
     import uuid
 
     with flask_app.app_context():
@@ -84,6 +85,14 @@ def auto_generate_next_month_dues(flask_app):
             )
             db.session.add(due)
             created += 1
+
+            # in-app only, same wording as the manual reminder/generate
+            # endpoints — queued on the same session, commits atomically
+            create_notification(
+                user_id=resident.user_id,
+                message=f'Maintenance dues reminder: ₹{amount:.2f} is due for {target_month.strftime("%B %Y")}',
+                type='dues_reminder',
+            )
 
         if created:
             db.session.commit()

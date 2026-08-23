@@ -577,7 +577,7 @@ onMounted(async () => {
         <div class="card-body-area">
           <div>
             <span class="amenity-name">{{ amenity.name }}</span>
-            <p class="amenity-desc">{{ amenity.description }}</p>
+            <p v-if="amenity.description" class="amenity-desc">{{ amenity.description }}</p>
           </div>
           <div class="card-body-bottom">
             <span class="exclusive-tag">{{ isBookable(amenity) ? (amenity.booking_type === 'automatic' ? 'Auto-approve' : 'Needs approval') : 'Not bookable' }}</span>
@@ -608,7 +608,7 @@ onMounted(async () => {
         <div class="card-body-area">
           <div>
             <span class="amenity-name">{{ amenity.name }}</span>
-            <p class="amenity-desc">{{ amenity.description }}</p>
+            <p v-if="amenity.description" class="amenity-desc">{{ amenity.description }}</p>
           </div>
           <div class="card-body-bottom">
             <span class="public-tag">{{ isBookable(amenity) ? 'Bookable for private events' : 'No booking needed' }}</span>
@@ -639,7 +639,7 @@ onMounted(async () => {
         <div class="card-body-area">
           <div>
             <span class="amenity-name">{{ amenity.name }}</span>
-            <p class="amenity-desc">{{ amenity.description }}</p>
+            <p v-if="amenity.description" class="amenity-desc">{{ amenity.description }}</p>
           </div>
           <div class="card-body-bottom">
             <span class="info-tag">📍 {{ amenity.location }}</span>
@@ -920,7 +920,7 @@ onMounted(async () => {
 
 /* ---------- Grid & cards ---------- */
 .amenity-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; margin-bottom: 8px; }
-.amenity-card { background: var(--color-surface); border-radius: var(--radius-xl); border: 1px solid var(--color-border); overflow: hidden; box-shadow: var(--shadow-sm); transition: box-shadow var(--transition-fast); cursor: pointer; }
+.amenity-card { background: var(--color-surface); border-radius: var(--radius-xl); border: 1px solid var(--color-border); overflow: hidden; box-shadow: var(--shadow-sm); transition: box-shadow var(--transition-fast); cursor: pointer; display: flex; flex-direction: column; }
 .amenity-card:hover { box-shadow: var(--shadow-md); }
 
 
@@ -941,7 +941,8 @@ onMounted(async () => {
 .status-tag.closed .status-dot { background: var(--badge-closed-text); }
 
 
-.card-body-area { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.card-body-area { padding: 14px; display: flex; flex-direction: column; gap: 10px; flex: 1; }
+.card-body-area > div:first-child { flex: 1; }
 .amenity-name { display: block; font-size: var(--font-size-md); font-weight: 700; color: var(--color-text-primary); margin-bottom: 4px; }
 .amenity-desc { font-size: var(--font-size-xs); color: var(--color-text-secondary); line-height: 1.5; }
 .card-body-bottom { display: flex; align-items: center; }

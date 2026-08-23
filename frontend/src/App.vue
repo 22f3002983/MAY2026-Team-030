@@ -17,22 +17,20 @@ const showLayout = computed(() => {
 
 <template>
   <div class="app">
+    <Transition name="layout-fade" mode="out-in">
+      <router-view v-if="!showLayout" key="no-layout" />
 
-    <!-- login page - no layout wrapper -->
-    <router-view v-if="!showLayout" />
-
-    <!-- all other pages - with sidebar and navbar -->
-    <template v-else>
-      <AppSidebar />
-      <div class="app-body">
-        <AppNavbar />
-        <main class="app-content">
-          <router-view /> <!-- current page renders -->
-        </main>
+      <div v-else key="layout" class="app-shell">
+        <AppSidebar />
+        <div class="app-body">
+          <AppNavbar />
+          <main class="app-content">
+            <router-view /> <!-- current page renders -->
+          </main>
+        </div>
+        <AppChatWidget />
       </div>
-      <AppChatWidget />
-    </template>
-
+    </Transition>
   </div>
 </template>
 
@@ -42,6 +40,21 @@ const showLayout = computed(() => {
   flex-direction: column;
   min-height: 100vh;
   background: var(--color-bg);
+}
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.layout-fade-enter-active,
+.layout-fade-leave-active {
+  transition: opacity 0.15s ease;
+}
+.layout-fade-enter-from,
+.layout-fade-leave-to {
+  opacity: 0;
 }
 
 .app > .login-shell {

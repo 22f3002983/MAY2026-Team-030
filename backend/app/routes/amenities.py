@@ -5,6 +5,7 @@ from app.models.amenity import Amenity
 from app.models.booking import Booking
 from app.services.ai_amenity_recommendation import recommend_amenity
 from app.routes.funds import distribute_payment
+from app.routes.notifications import create_notification
 from datetime import datetime, time
 import uuid
 import json
@@ -218,8 +219,18 @@ def book_amenity(amenity_id):
     if not date_str or not event_type or not guests:
         return jsonify({'error': 'date, event_type and guests are required'}), 400
 
+    if not isinstance(guests, int) or guests < 1:
+        return jsonify({'error': 'guests must be a positive number'}), 400
+    if amenity.capacity and guests > amenity.capacity:
+        return jsonify({'error': f'This amenity holds a maximum of {amenity.capacity} guests'}), 400
+
     date     = parse_date(date_str)
     end_date = parse_date(end_date_str)
+
+    if date < datetime.utcnow().date():
+        return jsonify({'error': 'Cannot book a date in the past'}), 400
+    if end_date < date:
+        return jsonify({'error': 'end_date cannot be before date'}), 400
 
     if amenity.pricing_type == 'hourly':
         start_time_str = data.get('start_time')
@@ -279,7 +290,7 @@ def book_amenity(amenity_id):
 def cancel_booking(booking_id):
     booking = Booking.query.get_or_404(booking_id)
 
-    if booking.resident_id != current_user.resident.id:
+    if current_user.role != 'resident' or not current_user.resident or booking.resident_id != current_user.resident.id:
         return jsonify({'error': 'Unauthorized'}), 403
     if booking.status in ('cancelled', 'rejected', 'completed'):
         return jsonify({'error': f'Booking is already {booking.status}'}), 400
@@ -297,7 +308,7 @@ def cancel_booking(booking_id):
 def pay_booking(booking_id):
     booking = Booking.query.get_or_404(booking_id)
 
-    if booking.resident_id != current_user.resident.id:
+    if current_user.role != 'resident' or not current_user.resident or booking.resident_id != current_user.resident.id:
         return jsonify({'error': 'Unauthorized'}), 403
     if booking.status != 'approved':
         return jsonify({'error': 'Only approved bookings can be paid for'}), 400
@@ -345,6 +356,15 @@ def approve_booking(booking_id):
 
     booking.status = 'approved'
     booking.payment_status = 'pending' if booking.price else None
+
+    # in-app only, same as dues reminders / notice posts — no Telegram here
+    if booking.resident and booking.resident.user_id:
+        create_notification(
+            user_id=booking.resident.user_id,
+            message=f'Your booking for {booking.amenity.name} on {booking.date} has been approved',
+            type='booking_approved',
+        )
+
     db.session.commit()
 
     return jsonify({'message': 'Booking approved', 'booking': booking_to_dict(booking)}), 200
@@ -365,6 +385,15 @@ def reject_booking(booking_id):
     data = request.get_json() or {}
     booking.status = 'rejected'
     booking.rejected_reason = data.get('reason')
+
+    if booking.resident and booking.resident.user_id:
+        reason_suffix = f' — {booking.rejected_reason}' if booking.rejected_reason else ''
+        create_notification(
+            user_id=booking.resident.user_id,
+            message=f'Your booking for {booking.amenity.name} on {booking.date} was rejected{reason_suffix}',
+            type='booking_rejected',
+        )
+
     db.session.commit()
 
     return jsonify({'message': 'Booking rejected', 'booking': booking_to_dict(booking)}), 200

@@ -157,6 +157,9 @@ function isBookable(amenity) {
 function statusLabel(status) {
   return { available: 'Available', booked: 'Booked', maintenance: 'Maintenance', closed: 'Closed' }[status] || status
 }
+function publicTagLabel(amenity) {
+  return isBookable(amenity) ? 'Bookable for private events' : 'No booking needed'
+}
 function bookingStatusLabel(status) {
   return {
     pending_approval: 'Pending approval',
@@ -319,15 +322,21 @@ const modalStep = ref('detail') // 'detail' | 'book'
 
 
 const isHourly = computed(() => selectedAmenity.value?.pricing?.type === 'hourly')
+const isDaily = computed(() => selectedAmenity.value?.pricing?.type === 'daily')
 const bookable = computed(() =>
   selectedAmenity.value ? isBookable(selectedAmenity.value) && selectedAmenity.value.status !== 'maintenance' : false
 )
+
+// used as the `min` on every date input so nobody can pick a date that's
+// already gone (backend rejects it too, but this keeps it out of the UI)
+const today = new Date().toISOString().slice(0, 10)
 
 
 
 
 // detail step: availability checker
 const checkDate = ref('')
+const checkEndDate = ref('')
 const checkStart = ref('18:00')
 const checkEnd = ref('20:00')
 const availResult = ref(null)
@@ -337,9 +346,38 @@ const checking = ref(false)
 
 
 // book step
-const bookForm = ref({ date: '', startTime: '18:00', endTime: '20:00', eventType: EVENT_TYPES[0], guests: 10 })
+const bookForm = ref({ date: '', endDate: '', startTime: '18:00', endTime: '20:00', eventType: EVENT_TYPES[0], guests: 10 })
 const bookError = ref('')
 const bookSubmitting = ref(false)
+
+
+
+
+// live estimate shown on the book step — mirrors the backend's exact
+// pricing formula (rate * max(units, min_units)) so what the resident
+// sees here always matches what they'll actually be charged
+const bookUnits = computed(() => {
+  const amenity = selectedAmenity.value
+  if (!amenity) return 0
+  if (isHourly.value) {
+    if (!bookForm.value.startTime || !bookForm.value.endTime) return 0
+    const [sh, sm] = bookForm.value.startTime.split(':').map(Number)
+    const [eh, em] = bookForm.value.endTime.split(':').map(Number)
+    const minutes = (eh * 60 + em) - (sh * 60 + sm)
+    return minutes > 0 ? Math.max(1, Math.round(minutes / 60)) : 0
+  }
+  if (isDaily.value) {
+    if (!bookForm.value.date || !bookForm.value.endDate) return 0
+    const days = Math.round((new Date(bookForm.value.endDate) - new Date(bookForm.value.date)) / 86400000) + 1
+    return days > 0 ? days : 0
+  }
+  return 1
+})
+const bookEstimatedPrice = computed(() => {
+  const amenity = selectedAmenity.value
+  if (!amenity?.pricing?.rate || !bookUnits.value) return null
+  return calculatePrice(amenity, bookUnits.value)
+})
 
 
 
@@ -349,8 +387,14 @@ function openDetail(amenity) {
   modalStep.value = 'detail'
   showModal.value = true
   checkDate.value = ''
+  checkEndDate.value = ''
   availResult.value = null
   bookError.value = ''
+  // reset the booking form too — otherwise guests/date/time picked while
+  // looking at one amenity would silently carry over as the starting
+  // point for the next amenity opened (e.g. 50 guests left over from the
+  // Community Hall pre-filling a booking for the 4-person Tennis Court)
+  bookForm.value = { date: '', endDate: '', startTime: '18:00', endTime: '20:00', eventType: EVENT_TYPES[0], guests: 10 }
 }
 
 
@@ -366,10 +410,15 @@ function closeModal() {
 
 async function runCheck() {
   if (!checkDate.value || !selectedAmenity.value) return
+  if (isDaily.value && checkEndDate.value && checkEndDate.value < checkDate.value) {
+    availResult.value = { available: false, message: 'End date cannot be before start date' }
+    return
+  }
   checking.value = true
   try {
     availResult.value = await checkAvailability(selectedAmenity.value.id, {
       date: checkDate.value,
+      endDate: isDaily.value ? (checkEndDate.value || checkDate.value) : undefined,
       startTime: checkStart.value,
       endTime: checkEnd.value,
     })
@@ -383,6 +432,7 @@ async function runCheck() {
 
 function goToBook() {
   if (checkDate.value) bookForm.value.date = checkDate.value
+  if (isDaily.value) bookForm.value.endDate = checkEndDate.value || checkDate.value || bookForm.value.date
   if (isHourly.value) {
     bookForm.value.startTime = checkStart.value
     bookForm.value.endTime = checkEnd.value
@@ -399,8 +449,20 @@ async function submitBooking() {
     bookError.value = 'All fields are required'
     return
   }
+  if (bookForm.value.date < today) {
+    bookError.value = 'Cannot book a date in the past'
+    return
+  }
   if (isHourly.value && bookForm.value.startTime >= bookForm.value.endTime) {
     bookError.value = 'End time must be after start time'
+    return
+  }
+  if (isDaily.value && (!bookForm.value.endDate || bookForm.value.endDate < bookForm.value.date)) {
+    bookError.value = 'End date must be on or after the start date'
+    return
+  }
+  if (selectedAmenity.value?.capacity && bookForm.value.guests > selectedAmenity.value.capacity) {
+    bookError.value = `This amenity holds a maximum of ${selectedAmenity.value.capacity} guests`
     return
   }
   bookSubmitting.value = true
@@ -409,6 +471,7 @@ async function submitBooking() {
     const booking = await createBooking({
       amenity,
       date: bookForm.value.date,
+      endDate: isDaily.value ? bookForm.value.endDate : null,
       startTime: isHourly.value ? bookForm.value.startTime : null,
       endTime: isHourly.value ? bookForm.value.endTime : null,
       eventType: bookForm.value.eventType,
@@ -422,9 +485,12 @@ async function submitBooking() {
       created_at: booking.created_at,
     })
     closeModal()
+    const dateLabel = isDaily.value && bookForm.value.endDate !== bookForm.value.date
+      ? `${bookForm.value.date} → ${bookForm.value.endDate}`
+      : bookForm.value.date
     successMsg.value = booking.status === 'pending_approval'
-      ? `Request for ${amenity.name} on ${bookForm.value.date} sent for approval.`
-      : `${amenity.name} booked for ${bookForm.value.date}. Confirmation sent.`
+      ? `Request for ${amenity.name} on ${dateLabel} sent for approval.`
+      : `${amenity.name} booked for ${dateLabel}. Confirmation sent.`
     setTimeout(() => successMsg.value = '', 4500)
   } catch (e) {
     bookError.value = e?.response?.data?.error || 'Could not create booking.'
@@ -567,7 +633,7 @@ onMounted(() => {
         <div class="card-body-area">
           <div>
             <span class="amenity-name">{{ amenity.name }}</span>
-            <p class="amenity-desc">{{ amenity.description }}</p>
+            <p v-if="amenity.description" class="amenity-desc">{{ amenity.description }}</p>
           </div>
           <div class="card-body-bottom">
             <span class="exclusive-tag">{{ amenity.booking_type === 'automatic' ? 'Auto-approve' : 'Needs approval' }}</span>
@@ -583,7 +649,7 @@ onMounted(() => {
 
     <!-- public -->
     <div class="section-title" style="margin-top: 32px">Shared Facilities</div>
-    <p class="section-sub">No booking needed — open to all residents</p>
+    <p class="section-sub">Open to all residents</p>
 
 
 
@@ -600,10 +666,11 @@ onMounted(() => {
         <div class="card-body-area">
           <div>
             <span class="amenity-name">{{ amenity.name }}</span>
-            <p class="amenity-desc">{{ amenity.description }}</p>
+            <p v-if="amenity.description" class="amenity-desc">{{ amenity.description }}</p>
           </div>
           <div class="card-body-bottom">
-            <span class="public-tag">{{ amenity.special_booking ? 'Bookable for private events' : 'No booking needed' }}</span>
+            <span class="public-tag">{{ publicTagLabel(amenity) }}</span>
+            <button v-if="isBookable(amenity) && amenity.status === 'available'" class="book-btn" @click.stop="openDetail(amenity); goToBook()">Book</button>
           </div>
         </div>
       </div>
@@ -631,7 +698,7 @@ onMounted(() => {
         <div class="card-body-area">
           <div>
             <span class="amenity-name">{{ amenity.name }}</span>
-            <p class="amenity-desc">{{ amenity.description }}</p>
+            <p v-if="amenity.description" class="amenity-desc">{{ amenity.description }}</p>
           </div>
           <div class="card-body-bottom">
             <span class="info-tag">📍 {{ amenity.location }}</span>
@@ -700,11 +767,15 @@ onMounted(() => {
             <div v-if="bookable" class="modal-availability-box">
               <div class="modal-avail-title">Check availability</div>
               <div class="modal-avail-row">
-                <input type="date" v-model="checkDate" class="modal-avail-input" />
+                <input type="date" v-model="checkDate" :min="today" class="modal-avail-input" />
                 <template v-if="isHourly">
                   <input type="time" v-model="checkStart" class="modal-avail-input small" />
                   <span class="modal-to">to</span>
                   <input type="time" v-model="checkEnd" class="modal-avail-input small" />
+                </template>
+                <template v-if="isDaily">
+                  <span class="modal-to">to</span>
+                  <input type="date" v-model="checkEndDate" :min="checkDate || today" class="modal-avail-input" />
                 </template>
                 <button class="modal-check-btn" @click="runCheck" :disabled="checking">{{ checking ? 'Checking…' : 'Check' }}</button>
               </div>
@@ -738,8 +809,13 @@ onMounted(() => {
 
 
 
-            <label class="modal-form-label">Date</label>
-            <input v-model="bookForm.date" type="date" class="modal-n-input" />
+            <label class="modal-form-label">{{ isDaily ? 'Start Date' : 'Date' }}</label>
+            <input v-model="bookForm.date" type="date" :min="today" class="modal-n-input" />
+
+            <template v-if="isDaily">
+              <label class="modal-form-label">End Date</label>
+              <input v-model="bookForm.endDate" type="date" :min="bookForm.date || today" class="modal-n-input" />
+            </template>
 
 
 
@@ -766,8 +842,17 @@ onMounted(() => {
 
 
 
-            <label class="modal-form-label">Guests</label>
-            <input v-model.number="bookForm.guests" type="number" min="1" class="modal-n-input" />
+            <label class="modal-form-label">Guests{{ selectedAmenity.capacity ? ` (max ${selectedAmenity.capacity})` : '' }}</label>
+            <input v-model.number="bookForm.guests" type="number" min="1" :max="selectedAmenity.capacity || undefined" class="modal-n-input" />
+
+
+
+
+            <div v-if="bookEstimatedPrice !== null" class="modal-price-preview">
+              Estimated total: <strong>₹{{ bookEstimatedPrice.toLocaleString('en-IN') }}</strong>
+              <span v-if="isHourly"> ({{ bookUnits }} hr{{ bookUnits > 1 ? 's' : '' }} × ₹{{ selectedAmenity.pricing.rate }})</span>
+              <span v-if="isDaily"> ({{ bookUnits }} day{{ bookUnits > 1 ? 's' : '' }} × ₹{{ selectedAmenity.pricing.rate }})</span>
+            </div>
 
 
 
@@ -911,7 +996,7 @@ onMounted(() => {
 
 /* ---------- Grid & cards ---------- */
 .amenity-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; margin-bottom: 8px; }
-.amenity-card { background: var(--color-surface); border-radius: var(--radius-xl); border: 1px solid var(--color-border); overflow: hidden; box-shadow: var(--shadow-sm); transition: box-shadow var(--transition-fast); cursor: pointer; }
+.amenity-card { background: var(--color-surface); border-radius: var(--radius-xl); border: 1px solid var(--color-border); overflow: hidden; box-shadow: var(--shadow-sm); transition: box-shadow var(--transition-fast); cursor: pointer; display: flex; flex-direction: column; }
 .amenity-card:hover { box-shadow: var(--shadow-md); }
 
 
@@ -938,7 +1023,8 @@ onMounted(() => {
 
 
 
-.card-body-area { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.card-body-area { padding: 16px; display: flex; flex-direction: column; gap: 12px; flex: 1; }
+.card-body-area > div:first-child { flex: 1; }
 .amenity-name { display: block; font-size: var(--font-size-lg); font-weight: 700; color: var(--color-text-primary); margin-bottom: 4px; }
 .amenity-desc { font-size: var(--font-size-sm); color: var(--color-text-secondary); line-height: 1.5; }
 .card-body-bottom { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; flex-wrap: wrap; gap: 6px; }
@@ -1028,6 +1114,7 @@ onMounted(() => {
 .modal-time-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .modal-time-field { display: flex; flex-direction: column; }
 .modal-error-msg { font-size: var(--font-size-sm); color: var(--color-danger); margin-top: 6px; }
+.modal-price-preview { font-size: var(--font-size-sm); color: var(--color-text-primary); background: var(--badge-closed-bg); border-radius: var(--radius-md); padding: 10px 12px; margin-top: 14px; }
 
 
 

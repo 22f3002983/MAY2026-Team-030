@@ -625,25 +625,31 @@ function goTo(path) {
 }
 
 .action-card {
-  background: linear-gradient(155deg, var(--c-900), var(--c-800));
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-left: 4px solid var(--c-900);
   border-radius: var(--radius-lg);
-  padding: 20px;
-  color: #fff;
+  padding: 18px 20px;
+  box-shadow: var(--shadow-xs);
+  color: var(--color-text-primary);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .action-label {
-  font-size: var(--font-size-sm);
-  opacity: 0.7;
-  font-weight: 600;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--c-800);
 }
 
 .action-text {
   font-size: var(--font-size-md);
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1.4;
+  color: var(--color-text-primary);
 }
 
 .action-cta {

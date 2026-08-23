@@ -171,12 +171,24 @@ const router = createRouter({
 });
 
 // this runs before every route change
+let lastBackgroundCheck = 0
+const BACKGROUND_RECHECK_MS = 60000
+
 router.beforeEach(async (to, from, next) => {
   const auth = useAuthStore()
-  // must be awaited — restoreSession now verifies the session with the
-  // backend (GET /auth/me) instead of just reading localStorage, so the
-  // auth checks below need the resolved result, not a stale ref value.
-  await auth.restoreSession()
+  // restoreSession verifies the session with the backend (GET /auth/me).
+  // We only need to block navigation on that round trip the first time the
+  // app loads — awaiting it on every single navigation is what was causing
+  // the visible stall/flash between pages (e.g. landing -> login). After
+  // the first check, trust the cached auth state instantly and only
+  // re-verify in the background occasionally (not on every navigation) so
+  // it stays fresh without hammering the backend on rapid clicks.
+  if (!auth.sessionChecked) {
+    await auth.restoreSession()
+  } else if (Date.now() - lastBackgroundCheck > BACKGROUND_RECHECK_MS) {
+    lastBackgroundCheck = Date.now()
+    auth.restoreSession()
+  }
 
   // not logged in + protected route → go to login
   if (to.meta.requiresAuth && !auth.isLoggedIn) {

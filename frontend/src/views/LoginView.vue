@@ -83,13 +83,13 @@ async function login() {
   <div class="login-shell">
     <!-- left panel -->
     <div class="login-left">
-      <div class="login-logo">
+      <button class="login-logo" @click="router.push({ name: 'landing' })" aria-label="Back to home">
         <div class="logo-mark">N</div>
         <div>
           <div class="logo-name">Niwaas</div>
           <div class="logo-sub">Society OS</div>
         </div>
-      </div>
+      </button>
 
       <div class="login-hero">
         <div class="society-pill">Raghvendra Sai Society · Hyderabad</div>
@@ -205,6 +205,18 @@ async function login() {
   display: flex;
   align-items: center;
   gap: 13px;
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  text-align: left;
+  transition: opacity var(--transition-fast);
+}
+
+.login-logo:hover {
+  opacity: 0.85;
 }
 
 .logo-mark {
@@ -218,18 +230,21 @@ async function login() {
   color: var(--c-900);
   font-weight: 800;
   font-size: 20px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
 }
 
 .logo-name {
   font-size: var(--font-size-3xl);
   font-weight: 800;
   letter-spacing: -0.5px;
+  color: #fff;
 }
 
 .logo-sub {
   font-size: var(--font-size-xs);
-  opacity: 0.7;
-  letter-spacing: 0.5px;
+  font-weight: 700;
+  color: var(--c-100);
+  letter-spacing: 0.8px;
   text-transform: uppercase;
 }
 

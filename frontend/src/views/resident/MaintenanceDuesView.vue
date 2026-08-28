@@ -74,18 +74,26 @@ async function confirmPayment() {
   paying.value = true
 
   const targets = payTarget.value ? [payTarget.value] : unpaidDues.value
+  let succeeded = 0
 
   try {
     for (const d of targets) {
       const res = await api.patch(`/dues/${d.id}/pay`, { amount_paid: d.amount_due })
       Object.assign(d, res.data.due)
+      succeeded++
     }
     paySuccess.value = targets.length > 1
       ? `${targets.length} months marked paid`
       : `Payment recorded for ${formatMonth(targets[0].month)}`
     setTimeout(() => { showPayModal.value = false }, 1200)
   } catch (err) {
-    payError.value = err.response?.data?.error || 'Payment failed'
+    const reason = err.response?.data?.error || 'Payment failed'
+    // paying "everything outstanding" pays one month at a time — if a later
+    // one fails, the earlier ones already went through, so the error must
+    // say so rather than reading as if nothing happened
+    payError.value = succeeded > 0
+      ? `${succeeded} of ${targets.length} months paid, then: ${reason}`
+      : reason
   } finally {
     paying.value = false
   }

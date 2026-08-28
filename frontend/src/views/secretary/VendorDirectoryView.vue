@@ -132,12 +132,17 @@ async function saveVendor() {
     salary: form.value.is_salaried ? Number(form.value.salary) : null,
   }
 
-  if (editingId.value) {
-    await api.patch(`/vendors/${editingId.value}`, payload)
-    showToast(`${payload.name} updated`)
-  } else {
-    await api.post('/vendors', payload)
-    showToast(`${payload.name} added to the directory`)
+  try {
+    if (editingId.value) {
+      await api.patch(`/vendors/${editingId.value}`, payload)
+      showToast(`${payload.name} updated`)
+    } else {
+      await api.post('/vendors', payload)
+      showToast(`${payload.name} added to the directory`)
+    }
+  } catch (err) {
+    formError.value = err.response?.data?.error || 'Failed to save vendor'
+    return
   }
 
   await fetchVendors()
@@ -145,16 +150,24 @@ async function saveVendor() {
 }
 
 async function setStatus(vendor, status) {
-  await api.patch(`/vendors/${vendor.id}`, { status })
-  vendor.status = status
-  showToast(`${vendor.name} marked ${status}`)
+  try {
+    await api.patch(`/vendors/${vendor.id}`, { status })
+    vendor.status = status
+    showToast(`${vendor.name} marked ${status}`)
+  } catch (err) {
+    showToast(err.response?.data?.error || `Failed to update ${vendor.name}`)
+  }
 }
 async function removeVendor(vendor) {
   const confirmed = window.confirm(`Remove ${vendor.name} from the directory? This can't be undone.`)
   if (!confirmed) return
-  await api.delete(`/vendors/${vendor.id}`)
-  vendors.value = vendors.value.filter(v => v.id !== vendor.id)
-  showToast(`${vendor.name} removed`)
+  try {
+    await api.delete(`/vendors/${vendor.id}`)
+    vendors.value = vendors.value.filter(v => v.id !== vendor.id)
+    showToast(`${vendor.name} removed`)
+  } catch (err) {
+    showToast(err.response?.data?.error || `Failed to remove ${vendor.name}`)
+  }
 }
 
 /* ---------------- Vendor detail / payment history (click a card) ---------------- */
@@ -553,6 +566,10 @@ function showToast(text) {
               <span>Paying <strong>{{ breakdown.vendors.length }}</strong> vendor(s)</span>
               <span class="pay-summary-total">₹{{ breakdown.total.toLocaleString('en-IN') }}</span>
             </div>
+
+            <p v-if="breakdown.already_paid && breakdown.already_paid.length" class="breakdown-note">
+              Already paid this month, so excluded: {{ breakdown.already_paid.join(', ') }}.
+            </p>
 
             <p class="section-label">Funds this will be drawn from</p>
             <div class="fund-breakdown-list">

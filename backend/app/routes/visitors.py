@@ -346,7 +346,7 @@ def verify_visitor():
     if current_user.role != 'security':
         return jsonify({'error': 'Only security can verify visitors'}), 403
 
-    data      = request.get_json()
+    data      = request.get_json() or {}
     pass_code = data.get('pass_code', '').strip().upper()
 
     if not pass_code:

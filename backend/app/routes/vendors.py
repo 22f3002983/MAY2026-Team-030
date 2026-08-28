@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user
 from app.extensions import db
 from app.models.vendor import Vendor
+from app.models.fund import FundTransaction
 from app.routes.funds import debit_fund, build_fallback_plan, FALLBACK_FUND_ORDER
 from datetime import datetime
 import uuid
@@ -127,6 +128,8 @@ def edit_vendor(vendor_id):
 
     vendor = Vendor.query.get_or_404(vendor_id)
     data   = request.get_json()
+    if not data:
+        return jsonify({'error': 'No data provided'}), 400
 
     if 'name'          in data: vendor.name          = data['name'].strip()
     if 'phone'         in data: vendor.phone         = data['phone'].strip()
@@ -172,30 +175,82 @@ def delete_vendor(vendor_id):
         return jsonify({'error': 'Only secretary can remove vendors'}), 403
 
     vendor = Vendor.query.get_or_404(vendor_id)
+
+    # SQLite (this app's default DB) doesn't enforce the vendor_id foreign
+    # keys on service_requests/community_issues by default, so deleting a
+    # vendor with existing history wouldn't fail loudly — it would silently
+    # orphan those rows' vendor_id, and later code that does sr.vendor.name
+    # (complete_request, rate_request) or issue.vendor.name would crash with
+    # an AttributeError instead. Block the delete up front and point the
+    # secretary at deactivating instead, which is reversible and keeps
+    # history intact.
+    from app.models.service_request import ServiceRequest
+    from app.models.community_issue import CommunityIssue
+
+    has_service_requests = ServiceRequest.query.filter_by(vendor_id=vendor.id).first() is not None
+    has_assigned_issues = CommunityIssue.query.filter_by(vendor_id=vendor.id).first() is not None
+    if has_service_requests or has_assigned_issues:
+        return jsonify({
+            'error': f'{vendor.name} has existing service requests or assigned complaints and cannot be deleted. '
+                     f'Mark them inactive instead.',
+        }), 400
+
     db.session.delete(vendor)
     db.session.commit()
 
     return jsonify({'message': f'{vendor.name} removed successfully'}), 200
 
 
+def _already_paid_vendor_ids_this_month(vendor_ids):
+    """Vendor IDs among vendor_ids that already have a vendor_salary debit
+    recorded this calendar month — used to auto-skip them from a payment
+    run instead of letting the secretary accidentally double-pay someone
+    (nothing previously stopped the same vendor being paid any number of
+    times in a month)."""
+    now = datetime.utcnow()
+    month_start = datetime(now.year, now.month, 1)
+    rows = (
+        FundTransaction.query
+        .filter(
+            FundTransaction.source == 'vendor_salary',
+            FundTransaction.reference_id.in_(vendor_ids),
+            FundTransaction.created_at >= month_start,
+        )
+        .with_entities(FundTransaction.reference_id)
+        .distinct()
+        .all()
+    )
+    return {row[0] for row in rows}
+
+
 # ── shared validation for the salary-payment endpoints ────────
 
 def _validate_salary_vendors(vendor_ids):
-    """Returns (vendors, error_response). error_response is None on success."""
+    """Returns (vendors, already_paid_names, error_response). Vendors already
+    paid this month are silently excluded from `vendors` rather than
+    rejecting the whole batch — same "top up what's missing" pattern
+    generate_dues() already uses elsewhere in this codebase — so paying
+    everyone at once just skips whoever's already been paid instead of
+    erroring out. error_response is None on success."""
     if not vendor_ids or not isinstance(vendor_ids, list):
-        return None, (jsonify({'error': 'vendor_ids (list) is required'}), 400)
+        return None, None, (jsonify({'error': 'vendor_ids (list) is required'}), 400)
 
-    vendors = []
+    candidates = []
     for vendor_id in vendor_ids:
         vendor = Vendor.query.get(vendor_id)
         if not vendor:
-            return None, (jsonify({'error': f'Vendor {vendor_id} not found'}), 404)
+            return None, None, (jsonify({'error': f'Vendor {vendor_id} not found'}), 404)
         if not vendor.is_salaried or not vendor.salary:
-            return None, (jsonify({'error': f'{vendor.name} is not a salaried vendor'}), 400)
+            return None, None, (jsonify({'error': f'{vendor.name} is not a salaried vendor'}), 400)
         if vendor.status != 'active':
-            return None, (jsonify({'error': f'{vendor.name} is inactive'}), 400)
-        vendors.append(vendor)
-    return vendors, None
+            return None, None, (jsonify({'error': f'{vendor.name} is inactive'}), 400)
+        candidates.append(vendor)
+
+    already_paid_ids = _already_paid_vendor_ids_this_month([v.id for v in candidates])
+    vendors = [v for v in candidates if v.id not in already_paid_ids]
+    already_paid_names = [v.name for v in candidates if v.id in already_paid_ids]
+
+    return vendors, already_paid_names, None
 
 
 # ── POST /api/vendors/pay-salaries/preview — dry-run the payment (secretary only) ──
@@ -212,20 +267,26 @@ def preview_pay_salaries():
         return jsonify({'error': 'Only secretary can pay vendor salaries'}), 403
 
     data = request.get_json() or {}
-    vendors, err = _validate_salary_vendors(data.get('vendor_ids'))
+    vendors, already_paid_names, err = _validate_salary_vendors(data.get('vendor_ids'))
     if err:
         return err
+    if not vendors:
+        return jsonify({
+            'error': f"Already paid this month: {', '.join(already_paid_names)}. Nothing left to preview.",
+            'already_paid': already_paid_names,
+        }), 400
 
     items = [(v.id, float(v.salary)) for v in vendors]
     allocations, fund_summary, shortfall = build_fallback_plan(items)
     total = sum(a for _, a in items)
 
     return jsonify({
-        'vendors':    [{'id': v.id, 'name': v.name, 'salary': float(v.salary)} for v in vendors],
-        'total':      total,
-        'funds':      fund_summary,
-        'shortfall':  shortfall,
-        'sufficient': shortfall <= 0,
+        'vendors':          [{'id': v.id, 'name': v.name, 'salary': float(v.salary)} for v in vendors],
+        'already_paid':     already_paid_names,
+        'total':            total,
+        'funds':            fund_summary,
+        'shortfall':        shortfall,
+        'sufficient':       shortfall <= 0,
     }), 200
 
 
@@ -245,9 +306,14 @@ def pay_salaries():
         return jsonify({'error': 'Only secretary can pay vendor salaries'}), 403
 
     data = request.get_json() or {}
-    vendors, err = _validate_salary_vendors(data.get('vendor_ids'))
+    vendors, already_paid_names, err = _validate_salary_vendors(data.get('vendor_ids'))
     if err:
         return err
+    if not vendors:
+        return jsonify({
+            'error': f"Already paid this month: {', '.join(already_paid_names)}. Nothing left to pay.",
+            'already_paid': already_paid_names,
+        }), 400
 
     vendors_by_id = {v.id: v for v in vendors}
     items = [(v.id, float(v.salary)) for v in vendors]
@@ -279,9 +345,14 @@ def pay_salaries():
     db.session.commit()
 
     total = sum(float(v.salary) for v in vendors)
+    message = f'Paid {len(vendors)} vendor(s) · ₹{total} total'
+    if already_paid_names:
+        message += f" — skipped {len(already_paid_names)} already paid this month ({', '.join(already_paid_names)})"
+
     return jsonify({
-        'message':    f'Paid {len(vendors)} vendor(s) · ₹{total} total',
-        'paid_count': len(vendors),
-        'total_paid': total,
-        'funds':      fund_summary,
+        'message':      message,
+        'paid_count':   len(vendors),
+        'total_paid':   total,
+        'already_paid': already_paid_names,
+        'funds':        fund_summary,
     }), 201

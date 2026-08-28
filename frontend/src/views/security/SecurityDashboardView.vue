@@ -213,6 +213,18 @@ function closeVerifyModal() {
 const mockUploadInput = ref(null)
 const mockUploadNotice = ref('')
 
+// generic error toast for gate actions (check-in/check-out/reject) that
+// fail — these are security-critical, so a failure must never be silent
+// (console.error alone left the guard with no on-screen sign anything
+// went wrong, e.g. "already checked in" or a dropped request)
+const actionErrorNotice = ref('')
+let actionErrorTimer = null
+function showActionError(text) {
+  actionErrorNotice.value = text
+  clearTimeout(actionErrorTimer)
+  actionErrorTimer = setTimeout(() => { actionErrorNotice.value = '' }, 4000)
+}
+
 function triggerMockUpload() {
   mockUploadInput.value?.click()
 }
@@ -230,7 +242,7 @@ async function checkIn(visitor) {
     await api.patch(`/visitors/${visitor.id}/checkin`)
     await refreshAll()
   } catch (err) {
-    console.error('Check-in failed', err)
+    showActionError(err.response?.data?.error || `Could not check in ${visitor.name}`)
   }
 }
 
@@ -239,7 +251,7 @@ async function checkOut(visitor) {
     await api.patch(`/visitors/${visitor.id}/checkout`)
     await refreshAll()
   } catch (err) {
-    console.error('Check-out failed', err)
+    showActionError(err.response?.data?.error || `Could not check out ${visitor.name}`)
   }
 }
 
@@ -248,7 +260,7 @@ async function rejectAtGate(visitor) {
     await api.patch(`/visitors/${visitor.id}/reject`)
     await refreshAll()
   } catch (err) {
-    console.error('Reject failed', err)
+    showActionError(err.response?.data?.error || `Could not reject ${visitor.name}`)
   }
 }
 
@@ -357,6 +369,7 @@ async function sendForApproval() {
     </div>
 
     <div v-if="mockUploadNotice" class="mock-upload-toast">{{ mockUploadNotice }}</div>
+    <div v-if="actionErrorNotice" class="mock-upload-toast action-error-toast">{{ actionErrorNotice }}</div>
 
     <!-- verify result modal -->
     <div v-if="verifyResult" class="modal-overlay" @click.self="closeVerifyModal">
@@ -1181,5 +1194,10 @@ async function sendForApproval() {
   color: var(--color-info-text);
   font-size: var(--font-size-sm);
   font-weight: 600;
+}
+
+.action-error-toast {
+  background: var(--color-danger-bg);
+  color: var(--color-danger-text);
 }
 </style>

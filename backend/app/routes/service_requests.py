@@ -277,8 +277,9 @@ def complete_request(request_id):
         )
         send_telegram_message(sr.vendor.telegram_chat_id, vendor_message)
 
+    vendor_name = sr.vendor.name if sr.vendor else 'the vendor'
     return jsonify({
-        'message': f'Marked complete — ₹{amount:.0f} paid to {sr.vendor.name}',
+        'message': f'Marked complete — ₹{amount:.0f} paid to {vendor_name}',
         'request': request_to_dict(sr),
     }), 200
 
@@ -303,7 +304,8 @@ def rate_request(request_id):
     sr.rating = rating
     db.session.commit()
 
+    vendor_name = sr.vendor.name if sr.vendor else 'the vendor'
     return jsonify({
-        'message': f'Thanks for rating {sr.vendor.name}',
+        'message': f'Thanks for rating {vendor_name}',
         'request': request_to_dict(sr),
     }), 200

@@ -94,7 +94,10 @@ def get_navigation_reply(role, message):
         response.raise_for_status()
         content = response.json()['choices'][0]['message']['content']
         reply = (content or '').strip()
-    except (requests.RequestException, KeyError, IndexError, ValueError):
+    except (requests.RequestException, KeyError, IndexError, ValueError) as e:
+        resp = locals().get('response')
+        body = f' | response body: {resp.text[:500]}' if resp is not None else ''
+        current_app.logger.warning(f'[ai_navigation] failed: {e}{body}')
         return FALLBACK_REPLY
 
     return reply or FALLBACK_REPLY

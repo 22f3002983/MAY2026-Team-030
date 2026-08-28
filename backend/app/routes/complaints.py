@@ -517,6 +517,13 @@ def retry_ai_suggestions(id_):
     if issue.ai_suggested_priority is None:
         issue.ai_suggested_priority = suggest_priority(issue.title, issue.description, issue.category)
 
+    # summary isn't "fill only if None" like category/priority — it's meant
+    # to always reflect the latest set of reports, so a manual retry here
+    # always regenerates it (same as _run_ai_suggestions does on every
+    # complaint POST), not just when it's missing.
+    all_descriptions = [c.description for c in Complaint.query.filter_by(issue_id=issue.id).all()]
+    issue.ai_suggested_description = suggest_summary(issue.title, issue.category, all_descriptions)
+
     db.session.commit()
     return jsonify({'complaint': issue_to_dict(issue)}), 200
 
@@ -580,12 +587,22 @@ def assign_vendor(id_):
         from app.telegram_bot import send_telegram_message
         reporter = complaint.resident if complaint else (issue.reports[0].resident if issue.reports else None)
         flat_number = reporter.flat.flat_number if reporter and reporter.flat else 'N/A'
+
+        if issue.vendor_start_time:
+            schedule_line = f"Scheduled: {issue.vendor_start_time.strftime('%d %b, %I:%M %p')}"
+            if issue.vendor_end_time:
+                schedule_line += f" – {issue.vendor_end_time.strftime('%I:%M %p')}"
+            schedule_line += '\n'
+        else:
+            schedule_line = ''
+
         vendor_message = (
             f'🔧 New Job Assigned — Niwaas RWA\n\n'
             f'Complaint: {issue.title}\n'
             f'Category: {issue.category}\n'
             f'Description: {issue.description[:100]}\n'
-            f'Resident Flat: {flat_number}\n\n'
+            f'Resident Flat: {flat_number}\n'
+            f'{schedule_line}\n'
             f'Please attend at the earliest.\n'
             f'— Niwaas Secretary'
         )

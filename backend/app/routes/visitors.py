@@ -57,11 +57,22 @@ def _is_usable(v):
 def visitor_to_security_dict(v):
     """Same shape as visitor_to_dict, but collapses revoked + timed-out
     into a single is_expired flag and drops revoked/revoked_at entirely —
-    security only needs to know a pass is no longer valid, not why."""
+    security only needs to know a pass is no longer valid, not why. Also
+    folds in the resident's flat details (flat number, unit, floor) so the
+    gate-code verify modal can show who/where without a second lookup."""
     d = visitor_to_dict(v)
     d['is_expired'] = bool(v.revoked or _is_timed_out(v))
     d.pop('revoked', None)
     d.pop('revoked_at', None)
+
+    resident = v.resident
+    flat = resident.flat if resident else None
+    d['resident_name'] = resident.name if resident else None
+    d['flat_number']   = flat.flat_number if flat else None
+    d['unit_number']   = flat.unit_number if flat else None
+    d['floor']         = flat.floor if flat else None
+    d['tower']         = flat.tower if flat else None
+
     return d
 
 def _compute_expires_at(visit_type, expected_date, expected_time, duration_minutes):

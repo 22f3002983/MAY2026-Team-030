@@ -205,6 +205,26 @@ function closeVerifyModal() {
   verifyResult.value = null
 }
 
+// =====================================================================
+// MOCK "UPLOAD DIGITAL PROOF" — no backend endpoint exists for this yet.
+// Just opens a file picker and shows a toast-style confirmation so it can
+// be demoed; nothing is actually persisted or sent anywhere.
+// =====================================================================
+const mockUploadInput = ref(null)
+const mockUploadNotice = ref('')
+
+function triggerMockUpload() {
+  mockUploadInput.value?.click()
+}
+
+function onMockUploadSelected(e) {
+  const file = e.target.files?.[0]
+  if (!file) return
+  mockUploadNotice.value = `"${file.name}" attached as digital proof (demo only — not uploaded)`
+  setTimeout(() => { mockUploadNotice.value = '' }, 4000)
+  e.target.value = '' // allow re-selecting the same file next time
+}
+
 async function checkIn(visitor) {
   try {
     await api.patch(`/visitors/${visitor.id}/checkin`)
@@ -323,6 +343,8 @@ async function sendForApproval() {
         <span class="verify-label">Verify a visitor</span>
         <span class="verify-sub">Enter the gate pass code to check a visitor in</span>
       </div>
+      <button class="mock-upload-btn" @click="triggerMockUpload">📎</button>
+      <input ref="mockUploadInput" type="file" class="visually-hidden" @change="onMockUploadSelected" />
       <input
         v-model="passCode"
         type="text"
@@ -331,7 +353,10 @@ async function sendForApproval() {
         @keyup.enter="verify"
       />
       <button class="verify-btn" @click="verify">Verify</button>
+      
     </div>
+
+    <div v-if="mockUploadNotice" class="mock-upload-toast">{{ mockUploadNotice }}</div>
 
     <!-- verify result modal -->
     <div v-if="verifyResult" class="modal-overlay" @click.self="closeVerifyModal">
@@ -386,10 +411,22 @@ async function sendForApproval() {
               <span class="vd-label">Reason</span>
               <span class="vd-value">{{ verifyResult.visitor.reason || '—' }}</span>
             </div>
-            <!-- NOTE: backend's visitor_to_security_dict does not return resident
-                 name or flat — only resident_id. These rows are left out rather
-                 than showing blank/wrong data. Add resident_name/flat to that
-                 serializer if you want them displayed here. -->
+            <div class="verify-detail-row">
+              <span class="vd-label">Resident</span>
+              <span class="vd-value">{{ verifyResult.visitor.resident_name || '—' }}</span>
+            </div>
+            <div class="verify-detail-row">
+              <span class="vd-label">Flat No.</span>
+              <span class="vd-value">{{ verifyResult.visitor.flat_number || '—' }}</span>
+            </div>
+            <div class="verify-detail-row">
+              <span class="vd-label">Unit</span>
+              <span class="vd-value">{{ verifyResult.visitor.unit_number || '—' }}</span>
+            </div>
+            <div class="verify-detail-row">
+              <span class="vd-label">Floor</span>
+              <span class="vd-value">{{ verifyResult.visitor.floor ?? '—' }}</span>
+            </div>
             <div v-if="verifyResult.visitor.vehicle_number" class="verify-detail-row">
               <span class="vd-label">Vehicle</span>
               <span class="vd-value">{{ verifyResult.visitor.vehicle_number }}</span>
@@ -697,6 +734,21 @@ async function sendForApproval() {
 }
 
 .verify-btn:hover { opacity: 0.85; }
+
+.mock-upload-btn {
+  height: 25px;
+  padding: 0 6px;
+  border-radius: var(--radius-md);
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  color: #fff;
+  font-weight: 700;
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all var(--transition-fast);
+}
+.mock-upload-btn:hover { background: rgba(255, 255, 255, 0.12); border-color: #fff; }
 
 .modal-overlay {
   position: fixed;
@@ -1108,4 +1160,26 @@ async function sendForApproval() {
 .log-badge.checked_in { background: var(--color-success-bg); color: var(--color-success-text); }
 .log-badge.checked_out{ background: var(--color-bg);         color: var(--color-text-muted);   }
 .log-badge.rejected   { background: var(--color-danger-bg);  color: var(--color-danger-text);  }
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.mock-upload-toast {
+  margin-bottom: 20px;
+  padding: 10px 16px;
+  border-radius: var(--radius-md);
+  background: var(--color-info-bg);
+  color: var(--color-info-text);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
 </style>

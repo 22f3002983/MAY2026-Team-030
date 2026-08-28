@@ -821,7 +821,15 @@ function statusClass(s) {
 
           <!-- AI summary + individual reports -->
           <div class="section">
-            <span class="section-label">AI Summary · Reported by {{ selected?.reports.length }}</span>
+            <div class="ai-summary-header">
+              <span class="section-label">AI Summary · Reported by {{ selected?.reports.length }}</span>
+              <button
+                class="ai-retry-btn"
+                title="Regenerate AI summary"
+                :disabled="retryingAi.has(selected.id)"
+                @click="retryAi(selected)"
+              >{{ retryingAi.has(selected.id) ? '⏳' : '↻' }}</button>
+            </div>
             <p class="ai-summary">{{ selected?.aiSummary }}</p>
             <div class="reports-list">
               <div v-for="(r, idx) in selected?.reports" :key="idx" class="report-card">
@@ -1392,6 +1400,15 @@ function statusClass(s) {
   letter-spacing: 0.4px;
   margin-bottom: 10px;
 }
+
+.ai-summary-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ai-summary-header .section-label { margin-bottom: 0; }
+.ai-summary-header .ai-retry-btn { margin: 0; }
 
 
 .ai-summary {

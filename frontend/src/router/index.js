@@ -147,6 +147,12 @@ const router = createRouter({
       component: () => import("../views/secretary/ElectricityBillsView.vue"),
       meta: { requiresAuth: true, role: "secretary" },
     },
+    {
+      path: "/sec/visitors",
+      name: "sec-visitors",
+      component: () => import("../views/secretary/SecVisitorsView.vue"),
+      meta: { requiresAuth: true, role: "secretary" },
+    },
 
     // // security routes
     {

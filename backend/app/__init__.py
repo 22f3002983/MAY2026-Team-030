@@ -95,6 +95,7 @@ def create_app():
         from app import models
         db.create_all()
         _ensure_telegram_columns(db.engine)
+        _ensure_visitor_validity_mode_column(db.engine)
 
     from app.scheduler import start_scheduler
     start_scheduler(flask_app)
@@ -117,3 +118,17 @@ def _ensure_telegram_columns(engine):
             with engine.connect() as conn:
                 conn.execute(text(f'ALTER TABLE {table} ADD COLUMN telegram_chat_id VARCHAR(64)'))
                 conn.commit()
+
+
+def _ensure_visitor_validity_mode_column(engine):
+    """One-time, non-destructive ALTER TABLE for validity_mode — same
+    reasoning as _ensure_telegram_columns. Remove this (and its call
+    above) once the app has been run once against an existing niwaas.db,
+    same as was done for is_multi_use / valid_until earlier."""
+    from sqlalchemy import inspect, text
+
+    columns = [c['name'] for c in inspect(engine).get_columns('visitors')]
+    if 'validity_mode' not in columns:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE visitors ADD COLUMN validity_mode VARCHAR(11) DEFAULT 'no_date' NOT NULL"))
+            conn.commit()

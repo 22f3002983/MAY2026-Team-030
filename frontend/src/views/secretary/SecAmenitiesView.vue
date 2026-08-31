@@ -310,8 +310,12 @@ const infraAmenities = computed(() => amenities.value.filter((a) => a.category =
 
 
 async function handleApprove(booking) {
-  await approveBookingApi(booking.id)
-  showToast(`${booking.amenity?.name} booking approved`)
+  try {
+    await approveBookingApi(booking.id)
+    showToast(`${booking.amenity?.name} booking approved`)
+  } catch (e) {
+    showToast(e?.response?.data?.error || 'Could not approve booking.')
+  }
 }
 
 

@@ -9,6 +9,14 @@ const phone        = ref('')   // 10 raw digits; +91 prefix is shown separately
 
 const expectedDate = ref('')
 const expectedTime = ref('')
+const isMultiUse    = ref(true)        // radio: multi-use pass vs one-time-use pass
+// 'exact_date' (single day, has a lower bound) or 'no_date' (open, with an
+// optional valid-until end date — see the "Valid until (optional)" field
+// below). The backend still accepts a legacy 'until_date' value on
+// existing passes; it behaves exactly like 'no_date' + a required
+// valid_until, so this form no longer offers it as a separate choice.
+const validityMode  = ref('no_date')
+const validUntil    = ref('')          // no_date mode only — last day the pass stays active
 const reason       = ref('')
 const formError    = ref('')
 const successMsg   = ref('')
@@ -22,19 +30,26 @@ function onPhoneInput(e) {
   phone.value = e.target.value.replace(/\D/g, '').slice(0, 10)
 }
 
-// NOTE: the backend's POST /visitors route only accepts
-// name / phone / expected_date / expected_time / reason / vehicle_number.
-// There's no separate "walk-in" creation route, and the Visitor model has
-// no expiry/duration field at all. So both modes hit the same endpoint —
-// "Walk-in" just skips the date/time fields. If you want walk-ins to
-// auto-expire, that needs a real column + logic on the backend; the
-// duration buttons below are UI-only for now and aren't sent anywhere.
+// Both Pre-register and Walk-in hit the same POST /visitors endpoint;
+// visit_type tells the backend which one it is. For a walk-in, the
+// duration picked below is sent as duration_minutes and the backend turns
+// it straight into expires_at = now + duration (see _compute_expires_at
+// in routes/visitors.py) — the pass auto-expires on its own, no check-out
+// required.
 const walkinDurationOptions = [15, 30, 45, 60]
 const walkinDuration = ref(15)
 
 const showHistory  = ref(false)
 const historyQuery = ref('')
 const historyDate  = ref('')
+
+const showEditModal    = ref(false)
+const editingVisitor   = ref(null)
+const editExpectedDate = ref('')
+const editExpectedTime = ref('')
+const editValidUntil   = ref('')
+const editError        = ref('')
+const editLoading      = ref(false)
 
 const showRegenerate  = ref(false)
 const regenerateQuery = ref('')
@@ -46,28 +61,21 @@ const listTabs = [
   { value: 'active',      label: 'Active Passes' },
 ]
 
-// `is_expired` in the API response is only as fresh as the moment it was
-// fetched — with no periodic refresh, a pass that expires while this page
-// is sitting open kept showing as active until some action forced a
-// refetch. `now` ticks on its own so expiry is re-evaluated live, without
-// waiting on the network; `visitorsPollTimer` also keeps other
-// server-driven fields (status changes made by security, etc.) reasonably
-// fresh, the same way NotificationBell does.
-const now = ref(Date.now())
-let clockTimer = null
+// The API resolves status, expiry, and the "not yet valid" check live on
+// every request (see visitor_to_dict in routes/visitors.py) — display_status,
+// is_expired, and is_not_yet_valid are always fresh as of the last fetch.
+// visitorsPollTimer re-fetches every 30s so those (plus anything changed
+// server-side, like a security check-in) stay reasonably current without
+// a manual refresh, the same way NotificationBell does.
 let visitorsPollTimer = null
-
 const VISITORS_POLL_INTERVAL_MS = 30000
-const CLOCK_TICK_MS = 15000
 
 onMounted(async () => {
   await fetchVisitors()
-  clockTimer = setInterval(() => { now.value = Date.now() }, CLOCK_TICK_MS)
   visitorsPollTimer = setInterval(() => { fetchVisitors() }, VISITORS_POLL_INTERVAL_MS)
 })
 
 onUnmounted(() => {
-  if (clockTimer) clearInterval(clockTimer)
   if (visitorsPollTimer) clearInterval(visitorsPollTimer)
 })
 
@@ -83,17 +91,10 @@ async function fetchVisitors() {
   }
 }
 
-// Source of truth for "is this pass expired right now": the server's
-// is_expired flag OR expires_at having passed as of our live clock —
-// whichever says expired wins. This means a pass flips to expired the
-// moment its time is up, not just on the next fetch.
-function isExpiredNow(v) {
-  if (v.is_expired) return true
-  if (!v.expires_at) return false
-  return now.value >= new Date(v.expires_at).getTime()
-}
-
-// ── status helpers, built only from real fields ──────────────
+// ── status helpers ────────────────────────────────────────────
+// v.display_status is resolved server-side (revoked (resident-cancelled)
+// beats expired (timed out) beats the real workflow status) — these maps
+// just turn that one value into a label/class.
 
 const STATUS_LABELS = {
   pre_registered: 'Expected',
@@ -111,19 +112,8 @@ const STATUS_CLASSES = {
   expired:        'badge-expired',
   revoked:        'badge-revoked',
 }
-
-// revoked (resident-cancelled) and expired (timed out) are kept as two
-// separate states so a resident can tell them apart at a glance — both
-// stop the pass from working, but only one was a deliberate cancel.
-function displayStatus(v) {
-  if (v.revoked) return 'revoked'
-  // pre_registered or checked_out can both still time out; checked_in
-  // can't (the visitor is already inside, the clock no longer matters).
-  if ((v.status === 'pre_registered' || v.status === 'checked_out') && isExpiredNow(v)) return 'expired'
-  return v.status
-}
-function statusLabel(v) { return STATUS_LABELS[displayStatus(v)] || v.status }
-function statusClass(v) { return STATUS_CLASSES[displayStatus(v)] || 'badge-out' }
+function statusLabel(v) { return STATUS_LABELS[v.display_status] || v.status }
+function statusClass(v) { return STATUS_CLASSES[v.display_status] || 'badge-out' }
 
 function formatDate(dateStr) {
   if (!dateStr) return null
@@ -138,12 +128,15 @@ function formatDateTime(dtStr) {
   return new Date(dtStr).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })
 }
 
-// Distinct wording for each way a pass stops being usable, so "resident
-// cancelled it" never looks the same as "it just ran out of time."
+// Distinct wording for each way a pass stops (or hasn't started) being
+// usable, so "resident cancelled it" never looks the same as "it just ran
+// out of time." v.is_not_yet_valid covers the other end — an exact_date
+// pass that hasn't started yet — and is resolved server-side too.
 function expiryBadgeText(v) {
   if (v.revoked)  return `Revoked ${formatDateTime(v.revoked_at)}`
+  if (v.is_not_yet_valid) return `Valid from ${formatDate(v.expected_date)}`
   if (!v.expires_at) return null
-  if (isExpiredNow(v)) return `Expired ${formatDateTime(v.expires_at)}`
+  if (v.is_expired) return `Expired ${formatDateTime(v.expires_at)}`
   return `Expires ${formatDateTime(v.expires_at)}`
 }
 
@@ -151,19 +144,43 @@ function visitTypeLabel(v) {
   return v.visit_type === 'walk_in' ? 'Walk-in' : 'Pre-registered'
 }
 
+// Spells out how usage (one-time/multi-use) and validity interact, since
+// they're independent choices that combine into 4 distinct behaviors —
+// see the checkout route's "if not is_multi_use: expires_at = now()" for
+// where one-time actually gets cut off.
+const passValidityHint = computed(() => {
+  if (validityMode.value === 'exact_date') {
+    return isMultiUse.value
+      ? 'Usable any number of times, but only on the expected date below — not before, not after.'
+      : 'Usable once, only on the expected date below — not before, not after.'
+  }
+  return isMultiUse.value
+    ? 'Usable any number of times. Stays open, or ends on the date you set below if you set one.'
+    : 'Usable once — the pass is spent as soon as the visitor checks out. Until then it stays open, or ends on the date you set below if you set one.'
+})
+
 function visitorMeta(v) {
   const parts = []
   const d = formatDate(v.expected_date)
   const t = formatTime(v.expected_time)
   if (d) parts.push(t ? `${d}, ${t}` : d)
+  if (v.validity_mode === 'no_date' && v.valid_until) parts.push(`Valid till ${formatDate(v.valid_until)}`)
   if (v.reason) parts.push(v.reason)
   return parts.length ? parts.join(' · ') : 'No fixed date'
+}
+
+// Multi-use passes are for repeat entries (maid/driver); one-time-use
+// passes are spent after a single visit — surfaced as a small tag next
+// to the pre-registered/walk-in tag so a resident can tell them apart
+// at a glance in the list.
+function usageLabel(v) {
+  return v.is_multi_use ? 'Multi-use' : 'One-time'
 }
 
 // ── tabs ───────────────────────────────────────────────────────
 
 const upcoming = computed(() =>
-  visitors.value.filter(v => v.status === 'pre_registered' && !v.revoked && !isExpiredNow(v))
+  visitors.value.filter(v => v.status === 'pre_registered' && !v.revoked && !v.is_expired)
 )
 const checkedIn = computed(() => visitors.value.filter(v => v.status === 'checked_in'))
 
@@ -200,7 +217,7 @@ async function denyGateRequest(v) {
 // passing or an explicit revoke does. That's what makes re-entry on the
 // same pass possible until it truly expires.
 const activePasses = computed(() =>
-  visitors.value.filter(v => !v.revoked && !isExpiredNow(v) && ['pre_registered', 'checked_in', 'checked_out'].includes(v.status))
+  visitors.value.filter(v => !v.revoked && !v.is_expired && ['pre_registered', 'checked_in', 'checked_out'].includes(v.status))
 )
 
 const visibleVisitors = computed(() => {
@@ -210,33 +227,56 @@ const visibleVisitors = computed(() => {
 })
 
 // ── revoke ─────────────────────────────────────────────────────
-// IMPORTANT: there is no /visitors/<id>/revoke route on the backend yet.
-// reject_visitor exists but is security-only, so residents get a 403 if
-// this hits that route. You'll need to add something like:
-//
-//   @visitors_bp.route('/<visitor_id>/revoke', methods=['PATCH'])
-//   @login_required
-//   def revoke_visitor(visitor_id):
-//       if current_user.role != 'resident':
-//           return jsonify({'error': 'Only residents can revoke their own passes'}), 403
-//       visitor = Visitor.query.get_or_404(visitor_id)
-//       if visitor.resident_id != current_user.resident.id:
-//           return jsonify({'error': 'Not your visitor'}), 403
-//       if visitor.status != 'pre_registered':
-//           return jsonify({'error': 'Only an upcoming pass can be revoked'}), 400
-//       visitor.status = 'rejected'
-//       db.session.commit()
-//       return jsonify({'message': 'Pass revoked', 'visitor': visitor_to_dict(visitor)}), 200
-//
-// Until that route exists this call will 404 and the catch below will
-// surface a normal error message instead of silently breaking the page.
+
 async function revokeCode(id) {
   try {
     await api.patch(`/visitors/${id}/revoke`)
     await fetchVisitors()
   } catch (err) {
-    formError.value = err.response?.data?.error || 'Could not revoke pass — backend route may be missing'
+    formError.value = err.response?.data?.error || 'Could not revoke pass'
     setTimeout(() => formError.value = '', 5000)
+  }
+}
+
+// ── edit expected date / time / valid until ─────────────────────
+// Only a live, not-yet-used pre-registered pass can be edited — once
+// it's checked in/out, revoked, or expired, "generate again" is the
+// right path instead of rewriting it in place (matches the backend's
+// /schedule route guards).
+
+function canEditSchedule(v) {
+  return v.visit_type === 'pre_registered' && v.status === 'pre_registered' && !v.revoked && !v.is_expired
+}
+
+function openEdit(v) {
+  editingVisitor.value   = v
+  editExpectedDate.value = v.expected_date || ''
+  editExpectedTime.value = v.expected_time ? v.expected_time.slice(0, 5) : ''
+  editValidUntil.value   = v.valid_until || ''
+  editError.value        = ''
+  showEditModal.value    = true
+}
+
+async function saveEdit() {
+  editError.value = ''
+  const v = editingVisitor.value
+  if (v.validity_mode !== 'no_date' && !editExpectedDate.value) {
+    editError.value = 'Expected date is required for this validity mode'; return
+  }
+
+  editLoading.value = true
+  try {
+    await api.patch(`/visitors/${v.id}/schedule`, {
+      expected_date: editExpectedDate.value || null,
+      expected_time: editExpectedTime.value || null,
+      valid_until: v.validity_mode === 'no_date' ? (editValidUntil.value || null) : null,
+    })
+    showEditModal.value = false
+    await fetchVisitors()
+  } catch (err) {
+    editError.value = err.response?.data?.error || 'Could not update pass'
+  } finally {
+    editLoading.value = false
   }
 }
 
@@ -247,8 +287,13 @@ async function submit() {
 
   if (!visitorName.value.trim()) { formError.value = 'Visitor name is required'; return }
   if (phone.value && phone.value.length !== 10) { formError.value = 'Phone number must be 10 digits'; return }
-  if (mode.value === 'Pre-register' && (!expectedDate.value || !expectedTime.value)) {
-    formError.value = 'Expected date and time are required for pre-registration'; return
+  // Exact-date and until-date passes both need a specific day to expire
+  // against, so expected date is required for either of those modes.
+  // "No fixed date" can skip it — its lifetime comes from the (optional)
+  // validity date instead. This applies to both one-time-use and
+  // multi-use passes; the two choices are independent of each other.
+  if (mode.value === 'Pre-register' && validityMode.value !== 'no_date' && !expectedDate.value) {
+    formError.value = 'Expected date is required for this validity mode'; return
   }
 
   loading.value = true
@@ -261,11 +306,15 @@ async function submit() {
       reason: reason.value || null,
       visit_type: mode.value === 'Pre-register' ? 'pre_registered' : 'walk_in',
       duration_minutes: mode.value === 'Walk-in' ? walkinDuration.value : null,
+      is_multi_use: mode.value === 'Pre-register' ? isMultiUse.value : true,
+      validity_mode: mode.value === 'Pre-register' ? validityMode.value : null,
+      valid_until: (mode.value === 'Pre-register' && validityMode.value === 'no_date') ? (validUntil.value || null) : null,
     })
 
     successMsg.value = `Gate pass ${response.data.pass_code} generated for ${visitorName.value}`
     visitorName.value = ''; phone.value = ''; expectedDate.value = ''; expectedTime.value = ''
     reason.value = ''; walkinDuration.value = 15
+    isMultiUse.value = true; validityMode.value = 'no_date'; validUntil.value = ''
 
     setTimeout(() => successMsg.value = '', 5000)
     await fetchVisitors()
@@ -277,12 +326,15 @@ async function submit() {
 }
 
 // ── search / regenerate ─────────────────────────────────────
-// candidates for "generate again": passes that are done and unusable —
-// rejected or expired. There's no "revoked" state distinct from
-// rejected on the backend, so a revoked pass shows up here as Rejected.
+// candidates for "generate again": pre-registered passes only (not
+// walk-ins/gate-requests) that are done and unusable — revoked or
+// expired. A live pass that's still usable should be edited instead
+// (see updatePass below), not regenerated as a new one.
 
 const regenerateCandidates = computed(() => {
-  const base = visitors.value.filter(v => ['rejected', 'expired', 'revoked'].includes(displayStatus(v)))
+  const base = visitors.value.filter(v =>
+    v.visit_type === 'pre_registered' && ['revoked', 'expired'].includes(v.display_status)
+  )
   if (!regenerateQuery.value.trim()) return base
   const q = regenerateQuery.value.toLowerCase()
   return base.filter(v => v.name.toLowerCase().includes(q))
@@ -296,6 +348,7 @@ function generatePassAgain(v) {
   phone.value = extractDigits(v.phone)
   reason.value = v.reason || ''
   expectedDate.value = ''; expectedTime.value = ''
+  isMultiUse.value = true; validityMode.value = 'no_date'; validUntil.value = ''
   showRegenerate.value = false
 }
 
@@ -313,11 +366,11 @@ const activityLog = computed(() => {
     if (v.check_out_time) events.push({ type: 'checked_out', visitor: v.name, at: v.check_out_time })
     if (v.status === 'rejected') events.push({ type: 'rejected', visitor: v.name, at: v.check_in_time || v.created_at })
     if (v.revoked) events.push({ type: 'revoked', visitor: v.name, at: v.revoked_at })
-    // same condition displayStatus() uses to label something "Expired" —
+    // same condition the backend uses for display_status === 'expired' —
     // a pre_registered or checked_out pass that timed out and was never
     // revoked. Timed out at exactly expires_at, so that's the event's
     // timestamp.
-    if ((v.status === 'pre_registered' || v.status === 'checked_out') && !v.revoked && isExpiredNow(v)) {
+    if ((v.status === 'pre_registered' || v.status === 'checked_out') && !v.revoked && v.is_expired) {
       events.push({ type: 'expired', visitor: v.name, at: v.expires_at })
     }
   })
@@ -416,15 +469,50 @@ function eventDotClass(type) { return EVENT_DOT_CLASS[type] || 'dot-created' }
         </div>
 
         <template v-if="mode === 'Pre-register'">
+          <div class="field">
+            <label>Pass usage</label>
+            <div class="radio-group">
+              <label class="radio-option">
+                <input v-model="isMultiUse" :value="false" type="radio" name="useType" class="n-radio" />
+                One-time use
+              </label>
+              <label class="radio-option">
+                <input v-model="isMultiUse" :value="true" type="radio" name="useType" class="n-radio" />
+                Multi-use pass (repeat entries, friends, maid, relatives)
+              </label>
+            </div>
+          </div>
+
+          <div class="field">
+            <label>Pass validity</label>
+            <div class="radio-group">
+              <label class="radio-option">
+                <input v-model="validityMode" value="exact_date" type="radio" name="validityMode" class="n-radio" />
+                Only on the expected date
+              </label>
+              <label class="radio-option">
+                <input v-model="validityMode" value="no_date" type="radio" name="validityMode" class="n-radio" />
+                Open — any time, with an optional end date
+              </label>
+            </div>
+            <p class="field-hint">{{ passValidityHint }}</p>
+          </div>
+
           <div class="two-fields">
             <div class="field">
-              <label>Expected date</label>
+              <label>Expected date{{ validityMode === 'no_date' ? ' (optional)' : '' }}</label>
               <input v-model="expectedDate" type="date" class="n-input" />
             </div>
             <div class="field">
-              <label>Expected time</label>
+              <label>Expected time (optional)</label>
               <input v-model="expectedTime" type="time" class="n-input" />
             </div>
+          </div>
+
+          <div v-if="validityMode === 'no_date'" class="field">
+            <label>Valid until (optional)</label>
+            <input v-model="validUntil" type="date" class="n-input" />
+            <p class="field-hint">Pass stays active on every day up to and including this date. Leave blank for no end date.</p>
           </div>
         </template>
 
@@ -467,6 +555,7 @@ function eventDotClass(type) { return EVENT_DOT_CLASS[type] || 'dot-created' }
               <div class="visitor-top">
                 <button class="visitor-name name-link" @click="openHistory(v.name)">{{ v.name }}</button>
                 <span :class="['visit-type-tag', v.visit_type === 'walk_in' ? 'tag-walkin' : 'tag-prereg']">{{ visitTypeLabel(v) }}</span>
+                <span v-if="v.visit_type !== 'walk_in'" :class="['visit-type-tag', v.is_multi_use ? 'tag-multiuse' : 'tag-oneuse']">{{ usageLabel(v) }}</span>
               </div>
               <span class="visitor-meta">{{ visitorMeta(v) }}</span>
               <div class="visitor-badges">
@@ -479,7 +568,14 @@ function eventDotClass(type) { return EVENT_DOT_CLASS[type] || 'dot-created' }
               <span class="pass-code">{{ v.pass_code }}</span>
               <div class="action-row">
                 <button
-                  v-if="!v.revoked && !isExpiredNow(v) && ['pre_registered', 'checked_in', 'checked_out'].includes(v.status)"
+                  v-if="canEditSchedule(v)"
+                  class="btn-mini"
+                  @click="openEdit(v)"
+                >
+                  Edit
+                </button>
+                <button
+                  v-if="!v.revoked && !v.is_expired && ['pre_registered', 'checked_in', 'checked_out'].includes(v.status)"
                   class="revoke-btn"
                   @click="revokeCode(v.id)"
                 >
@@ -536,7 +632,7 @@ function eventDotClass(type) { return EVENT_DOT_CLASS[type] || 'dot-created' }
           <div class="history-filters">
             <input v-model="regenerateQuery" type="text" placeholder="Search by visitor name..." class="n-input" />
           </div>
-          <p class="field-hint" style="margin-bottom: 12px;">Showing visitors whose pass has been rejected/revoked or expired.</p>
+          <p class="field-hint" style="margin-bottom: 12px;">Showing pre-registered passes that have been revoked or expired.</p>
           <div class="history-list">
             <div v-for="v in regenerateCandidates" :key="v.id" class="search-row">
               <div class="search-info">
@@ -544,10 +640,42 @@ function eventDotClass(type) { return EVENT_DOT_CLASS[type] || 'dot-created' }
                 <span class="visitor-meta">{{ visitorMeta(v) }}</span>
                 <span :class="['badge', statusClass(v)]">{{ statusLabel(v) }}</span>
               </div>
-              <button v-if="displayStatus(v) !== 'expired'" class="btn-mini-primary" @click="generatePassAgain(v)">Generate pass again</button>
+              <button class="btn-mini-primary" @click="generatePassAgain(v)">Generate pass again</button>
             </div>
             <div v-if="regenerateCandidates.length === 0" class="empty-state"><p>No matching visitors</p></div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="showEditModal" class="modal-overlay" @click.self="showEditModal = false">
+      <div class="modal history-modal">
+        <div class="modal-header">
+          <h3>Edit pass — {{ editingVisitor?.name }}</h3>
+          <button class="close-btn" @click="showEditModal = false">✕</button>
+        </div>
+        <div class="modal-body">
+          <p v-if="editError" class="error-msg">{{ editError }}</p>
+
+          <div class="two-fields">
+            <div class="field">
+              <label>Expected date{{ editingVisitor?.validity_mode === 'no_date' ? ' (optional)' : '' }}</label>
+              <input v-model="editExpectedDate" type="date" class="n-input" />
+            </div>
+            <div class="field">
+              <label>Expected time (optional)</label>
+              <input v-model="editExpectedTime" type="time" class="n-input" />
+            </div>
+          </div>
+
+          <div v-if="editingVisitor?.validity_mode === 'no_date'" class="field">
+            <label>Valid until (optional)</label>
+            <input v-model="editValidUntil" type="date" class="n-input" />
+          </div>
+
+          <button class="submit-btn" :disabled="editLoading" @click="saveEdit">
+            {{ editLoading ? 'Saving...' : 'Save changes' }}
+          </button>
         </div>
       </div>
     </div>
@@ -590,6 +718,10 @@ function eventDotClass(type) { return EVENT_DOT_CLASS[type] || 'dot-created' }
 
 .field-hint { font-size: 11px; color: var(--color-text-muted); margin-top: 6px; }
 .success-banner { background: var(--color-success-bg); color: var(--color-success-text); border: 1px solid var(--color-success); border-radius: var(--radius-md); padding: 10px 14px; font-size: var(--font-size-xs); font-weight: 600; margin-bottom: 14px; }
+
+.radio-group { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.radio-option { display: flex; align-items: center; gap: 8px; font-size: var(--font-size-xs); font-weight: 600; color: var(--c-800); cursor: pointer; }
+.n-radio { width: 16px; height: 16px; accent-color: var(--c-700); cursor: pointer; flex-shrink: 0; }
 
 .field { margin-bottom: 14px; }
 .field:last-of-type { margin-bottom: 0; }
@@ -634,6 +766,8 @@ label { display: block; font-size: var(--font-size-xs); font-weight: 700; color:
 .visit-type-tag { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px; padding: 2px 7px; border-radius: var(--radius-pill); }
 .tag-prereg { background: var(--color-bg); color: var(--color-text-muted); }
 .tag-walkin { background: #FFF3E0; color: #B45309; }
+.tag-multiuse { background: var(--color-info-bg); color: var(--color-info-text); }
+.tag-oneuse { background: var(--color-bg); color: var(--color-text-muted); }
 
 .badge { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: var(--radius-pill); }
 .badge-expected { background: var(--color-info-bg); color: var(--color-info-text); }

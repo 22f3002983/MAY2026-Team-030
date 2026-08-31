@@ -242,6 +242,8 @@ def generate_dues():
         return jsonify({'error': 'Only secretary can generate dues'}), 403
 
     data       = request.get_json()
+    if not data:
+        return jsonify({'error': 'No data provided'}), 400
     month_str  = data.get('month')
     amount_due = data.get('amount_due')
 
@@ -330,28 +332,41 @@ def mark_paid(due_id):
     data = request.get_json() or {}
 
     try:
-        amount_paid = float(data.get('amount_paid', due.amount_due))
+        payment_now = float(data.get('amount_paid', float(due.amount_due) - float(due.amount_paid)))
     except (TypeError, ValueError):
         return jsonify({'error': 'amount_paid must be a number'}), 400
 
-    if amount_paid <= 0:
+    if payment_now <= 0:
         return jsonify({'error': 'amount_paid must be greater than zero'}), 400
-    # can't exceed what's actually owed — this number flows straight into
-    # distribute_payment(), which really credits the funds ledger, so a
-    # client-inflated amount here would fabricate money that was never paid
-    if amount_paid > float(due.amount_due):
-        return jsonify({'error': 'amount_paid cannot exceed the amount due'}), 400
 
-    due.amount_paid = amount_paid
+    # amount_paid is what's being paid *in this transaction*, added on top of
+    # any earlier partial payment — not the new running total. Comparing it
+    # to the full amount_due (rather than the remaining balance) and then
+    # overwriting due.amount_paid with it would silently erase a prior
+    # partial payment from the due while still crediting the fund ledger
+    # for both amounts, so the two go out of sync.
+    remaining = float(due.amount_due) - float(due.amount_paid)
+    if payment_now > remaining:
+        return jsonify({'error': f'amount_paid cannot exceed the remaining balance (₹{remaining:.2f})'}), 400
+
+    due.amount_paid = float(due.amount_paid) + payment_now
     due.paid_date   = datetime.utcnow()
 
     db.session.commit()
 
-    distribute_payment(amount_paid, source='dues_payment', reference_id=due.id,
+    distribute_payment(payment_now, source='dues_payment', reference_id=due.id,
                         description=f'Dues payment — {due.month.strftime("%b %Y")}')
 
-    due.file_url = generate_receipt_pdf(due)
-    db.session.commit()
+    # The payment itself (amount_paid + fund ledger entry) is already
+    # committed above — a receipt PDF failure here (disk/font/etc.) must not
+    # surface as a request failure, or the resident/secretary would see an
+    # error and could assume the payment didn't go through and retry it.
+    try:
+        due.file_url = generate_receipt_pdf(due)
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        print(f' * [dues] receipt generation failed for due {due.id}: {exc}', flush=True)
 
     return jsonify({
         'message': 'Payment recorded',

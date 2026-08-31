@@ -369,6 +369,15 @@ def create_complaint():
 
 
 
+    # commit first — the background thread below opens its own DB session
+    # (a separate connection under a real DB engine) and immediately queries
+    # for this issue by id; starting the thread before the row is committed
+    # is a race that can make that lookup miss it and silently skip the AI
+    # suggestions for this complaint, depending on OS thread-scheduling
+    # timing. Committing first removes the race rather than relying on
+    # thread-startup overhead to usually win it.
+    db.session.commit()
+
     # category/priority/summary all happen off-thread so the response above
     # doesn't wait on OpenRouter — summary re-runs on every post (a join
     # re-merges descriptions), category/priority only on a brand-new issue
@@ -378,9 +387,6 @@ def create_complaint():
         args=(flask_app, issue.id, title, description, category, is_new_issue),
         daemon=True,
     ).start()
-
-
-    db.session.commit()
 
 
     message = 'Complaint raised successfully' if is_new_issue else 'Added your report to an existing open issue'
@@ -517,6 +523,13 @@ def retry_ai_suggestions(id_):
     if issue.ai_suggested_priority is None:
         issue.ai_suggested_priority = suggest_priority(issue.title, issue.description, issue.category)
 
+    # summary isn't "fill only if None" like category/priority — it's meant
+    # to always reflect the latest set of reports, so a manual retry here
+    # always regenerates it (same as _run_ai_suggestions does on every
+    # complaint POST), not just when it's missing.
+    all_descriptions = [c.description for c in Complaint.query.filter_by(issue_id=issue.id).all()]
+    issue.ai_suggested_description = suggest_summary(issue.title, issue.category, all_descriptions)
+
     db.session.commit()
     return jsonify({'complaint': issue_to_dict(issue)}), 200
 
@@ -537,6 +550,8 @@ def assign_vendor(id_):
 
 
     data      = request.get_json()
+    if not data:
+        return jsonify({'error': 'No data provided'}), 400
     vendor_id = data.get('vendor_id')
 
 
@@ -549,10 +564,13 @@ def assign_vendor(id_):
 
     start_raw = data.get('vendor_start_time')
     end_raw   = data.get('vendor_end_time')
-    if start_raw:
-        issue.vendor_start_time = datetime.fromisoformat(start_raw.replace('Z', '+00:00'))
-    if end_raw:
-        issue.vendor_end_time = datetime.fromisoformat(end_raw.replace('Z', '+00:00'))
+    try:
+        if start_raw:
+            issue.vendor_start_time = datetime.fromisoformat(start_raw.replace('Z', '+00:00'))
+        if end_raw:
+            issue.vendor_end_time = datetime.fromisoformat(end_raw.replace('Z', '+00:00'))
+    except ValueError:
+        return jsonify({'error': 'vendor_start_time and vendor_end_time must be valid ISO datetimes'}), 400
 
 
     issue.vendor_id              = vendor.id
@@ -580,12 +598,22 @@ def assign_vendor(id_):
         from app.telegram_bot import send_telegram_message
         reporter = complaint.resident if complaint else (issue.reports[0].resident if issue.reports else None)
         flat_number = reporter.flat.flat_number if reporter and reporter.flat else 'N/A'
+
+        if issue.vendor_start_time:
+            schedule_line = f"Scheduled: {issue.vendor_start_time.strftime('%d %b, %I:%M %p')}"
+            if issue.vendor_end_time:
+                schedule_line += f" – {issue.vendor_end_time.strftime('%I:%M %p')}"
+            schedule_line += '\n'
+        else:
+            schedule_line = ''
+
         vendor_message = (
             f'🔧 New Job Assigned — Niwaas RWA\n\n'
             f'Complaint: {issue.title}\n'
             f'Category: {issue.category}\n'
             f'Description: {issue.description[:100]}\n'
-            f'Resident Flat: {flat_number}\n\n'
+            f'Resident Flat: {flat_number}\n'
+            f'{schedule_line}\n'
             f'Please attend at the earliest.\n'
             f'— Niwaas Secretary'
         )
@@ -609,6 +637,8 @@ def assign_vendor(id_):
 @login_required
 def update_status(id_):
     data           = request.get_json()
+    if not data:
+        return jsonify({'error': 'No data provided'}), 400
     new_status     = data.get('status')
     payment_amount = data.get('payment_amount')
     payment_fund   = data.get('payment_fund')
@@ -697,6 +727,8 @@ def submit_feedback(complaint_id):
         return jsonify({'error': 'Can only submit feedback on resolved complaints'}), 400
 
     data   = request.get_json()
+    if not data:
+        return jsonify({'error': 'No data provided'}), 400
     rating = data.get('feedback_rating')
     comment= data.get('feedback_comment', '')
 

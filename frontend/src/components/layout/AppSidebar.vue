@@ -28,6 +28,7 @@ const navItems = computed(() => {
       { label: 'Complaints',   icon: '⚠', to: '/sec/complaints' },
       { label: 'Notices',      icon: '🔔', to: '/sec/notices' },
       { label: 'Emergency',    icon: '🚨', to: '/sec/emergency' },
+      { label: 'Visitors',     icon: '👤', to: '/sec/visitors' },
       { label: 'Maintenance',  icon: '💳', to: '/sec/maintenance' },
       { label: 'Residents',    icon: '👥', to: '/sec/residents' },
       { label: 'Documents',  icon: '📄', to: '/sec/documents' },

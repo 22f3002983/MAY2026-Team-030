@@ -124,6 +124,27 @@ def create_request():
     db.session.add(sr)
     db.session.commit()
 
+    # notify the vendor on Telegram if they've connected their account —
+    # assignment happens at booking time here, unlike complaints, since the
+    # resident picks the vendor directly when creating the request.
+    if vendor.telegram_chat_id:
+        from app.telegram_bot import send_telegram_message
+        flat_number = current_user.resident.flat.flat_number if current_user.resident.flat else 'N/A'
+        schedule_line = ''
+        if sr.scheduled_date and sr.scheduled_time:
+            schedule_line = f'Scheduled: {sr.scheduled_date.strftime("%d %b")}, {sr.scheduled_time.strftime("%I:%M %p")}\n'
+
+        vendor_message = (
+            f'🔧 New Home Service Booking — Niwaas RWA\n\n'
+            f'Service: {category.title()}\n'
+            f'Description: {description[:100]}\n'
+            f'Resident Flat: {flat_number}\n'
+            f'{schedule_line}\n'
+            f'Please attend at the scheduled time.\n'
+            f'— Niwaas Resident'
+        )
+        send_telegram_message(vendor.telegram_chat_id, vendor_message)
+
     return jsonify({
         'message': f'Booked with {vendor.name}',
         'request': request_to_dict(sr),
@@ -244,8 +265,21 @@ def complete_request(request_id):
     sr.payment_amount = amount
     db.session.commit()
 
+    # notify the vendor on Telegram that payment landed
+    if sr.vendor and sr.vendor.telegram_chat_id:
+        from app.telegram_bot import send_telegram_message
+
+        vendor_message = (
+            f'✅ Payment Received — Niwaas RWA\n\n'
+            f'Service: {sr.category.title()}\n'
+            f'Amount: ₹{amount:.0f}\n\n'
+            f'Thank you for your work!'
+        )
+        send_telegram_message(sr.vendor.telegram_chat_id, vendor_message)
+
+    vendor_name = sr.vendor.name if sr.vendor else 'the vendor'
     return jsonify({
-        'message': f'Marked complete — ₹{amount:.0f} paid to {sr.vendor.name}',
+        'message': f'Marked complete — ₹{amount:.0f} paid to {vendor_name}',
         'request': request_to_dict(sr),
     }), 200
 
@@ -270,7 +304,8 @@ def rate_request(request_id):
     sr.rating = rating
     db.session.commit()
 
+    vendor_name = sr.vendor.name if sr.vendor else 'the vendor'
     return jsonify({
-        'message': f'Thanks for rating {sr.vendor.name}',
+        'message': f'Thanks for rating {vendor_name}',
         'request': request_to_dict(sr),
     }), 200

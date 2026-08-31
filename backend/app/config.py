@@ -27,4 +27,12 @@ class Config:
         }
 
     OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
-    OPENROUTER_MODEL   = os.getenv('OPENROUTER_MODEL', 'openai/gpt-oss-20b:free')
+    # openai/gpt-oss-20b:free AND openai/gpt-oss-120b:free were both pulled
+    # from OpenRouter's free tier within days of each other (Aug 2026) — both
+    # 404 with "unavailable for free, use the paid slug instead". Given how
+    # fast individual free models are getting delisted right now, pinning to
+    # one named model isn't safe. openrouter/free is a router: it auto-picks
+    # from whatever's currently free and filters for the features the
+    # request needs (tool calling, etc.), so one model going paid/delisted
+    # doesn't take the AI features down again.
+    OPENROUTER_MODEL   = os.getenv('OPENROUTER_MODEL', 'openrouter/free')

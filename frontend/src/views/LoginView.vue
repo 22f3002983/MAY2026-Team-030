@@ -22,6 +22,27 @@ const roles = [
   { value: "security", label: "Security" },
 ];
 
+const demoCredentials = {
+  resident: { email: "resident1@niwaas.in", password: "test1234" },
+  secretary: { email: "secretary@niwaas.in", password: "test1234" },
+  security: { email: "security@niwaas.in", password: "test1234" },
+};
+
+function selectRole(value) {
+  selectedRole.value = value;
+  // switching roles always starts fresh — no stale creds from the
+  // previously selected role hanging around
+  email.value = "";
+  password.value = "";
+}
+
+function fillDemoCredentials(value) {
+  selectedRole.value = value;
+  const creds = demoCredentials[value];
+  email.value = creds.email;
+  password.value = creds.password;
+}
+
 function roleLabel(value) {
   return roles.find((r) => r.value === value)?.label || value;
 }
@@ -118,7 +139,8 @@ async function login() {
             v-for="r in roles"
             :key="r.value"
             :class="['role-btn', { active: selectedRole === r.value }]"
-            @click="selectedRole = r.value"
+            @click="selectRole(r.value)"
+            @dblclick="fillDemoCredentials(r.value)"
           >
             {{ r.label }}
           </button>

@@ -29,6 +29,24 @@ function formatTime(iso) {
   if (!iso) return '—'
   return new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })
 }
+function formatDate(dateStr) {
+  if (!dateStr) return null
+  return new Date(dateStr).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
+}
+
+// Multi-use vs one-time-use, and how the pass's date window is set up —
+// surfaced at the gate so security can tell at a glance (e.g. a
+// one-time-use pass currently inside won't be checkinable again after
+// checkout; an exact_date pass isn't usable outside its single day).
+function usageLabel(v) {
+  return v.is_multi_use ? 'Multi-use' : 'One-time'
+}
+function validityLabel(v) {
+  if (v.validity_mode === 'exact_date' && v.expected_date) return `Exact date only: ${formatDate(v.expected_date)}`
+  if (v.validity_mode === 'until_date' && v.expected_date) return `Valid until ${formatDate(v.expected_date)}`
+  if (v.validity_mode === 'no_date' && v.valid_until) return `Valid until ${formatDate(v.valid_until)}`
+  return 'No fixed date'
+}
 
 // live visitor data
 const todaysVisitors  = ref([])
@@ -175,22 +193,35 @@ async function verify() {
     // revoked/expired check, so this always reflects the visitor's real
     // current state — e.g. still shows "already checked in" even if a
     // resident revoked the pass after the visitor entered.
+    //
+    // checked_out is NOT single-use: the backend's check_in route only
+    // blocks re-checkin while status is exactly 'checked_in' (see
+    // visitors.py check_in()), and is deliberately status-agnostic
+    // otherwise (_is_usable() only looks at revoked/expires_at). The
+    // resident dashboard's "Active Passes" tab reflects that same
+    // intent — a checked_out pass still shows there until it actually
+    // expires or is revoked, specifically to support re-entry. So this
+    // is treated as a valid, checkinable pass, just flagged as a
+    // returning visitor for the modal's wording.
     if (visitor.status === 'checked_in') {
       verifyResult.value = { outcome: 'already_in', visitor }
     } else if (visitor.status === 'checked_out') {
-      verifyResult.value = { outcome: 'already_used', visitor }
+      verifyResult.value = { outcome: 're_entry', visitor }
     } else {
       verifyResult.value = { outcome: 'valid', visitor }
     }
   } catch (err) {
+    const message = err.response?.data?.error || ''
     const allKnown = [...todaysVisitors.value, ...insideVisitors.value]
     const match = allKnown.find(v => v.pass_code === code)
 
-    // Reaching here means the pass isn't checked_in/checked_out AND isn't
-    // usable — i.e. it's genuinely not valid (expired or revoked). We
-    // don't try to tell those two apart for security; is_expired already
-    // collapses both into one flag on the backend.
-    if (!match) {
+    // The backend gives a specific message for an exact_date pass that
+    // hasn't started yet — surface that distinctly instead of lumping it
+    // in with "not valid" (is_expired alone can't tell these apart: a
+    // not-yet-started pass isn't expired, it just hasn't begun).
+    if (message.includes("isn't valid yet")) {
+      verifyResult.value = { outcome: 'not_yet_valid', visitor: match, message }
+    } else if (!match) {
       verifyResult.value = { outcome: 'not_found' }
     } else if (match.is_expired) {
       verifyResult.value = { outcome: 'not_valid', visitor: match }
@@ -205,12 +236,44 @@ function closeVerifyModal() {
   verifyResult.value = null
 }
 
+// =====================================================================
+// MOCK "UPLOAD DIGITAL PROOF" — no backend endpoint exists for this yet.
+// Just opens a file picker and shows a toast-style confirmation so it can
+// be demoed; nothing is actually persisted or sent anywhere.
+// =====================================================================
+const mockUploadInput = ref(null)
+const mockUploadNotice = ref('')
+
+// generic error toast for gate actions (check-in/check-out/reject) that
+// fail — these are security-critical, so a failure must never be silent
+// (console.error alone left the guard with no on-screen sign anything
+// went wrong, e.g. "already checked in" or a dropped request)
+const actionErrorNotice = ref('')
+let actionErrorTimer = null
+function showActionError(text) {
+  actionErrorNotice.value = text
+  clearTimeout(actionErrorTimer)
+  actionErrorTimer = setTimeout(() => { actionErrorNotice.value = '' }, 4000)
+}
+
+function triggerMockUpload() {
+  mockUploadInput.value?.click()
+}
+
+function onMockUploadSelected(e) {
+  const file = e.target.files?.[0]
+  if (!file) return
+  mockUploadNotice.value = `"${file.name}" attached as digital proof (demo only — not uploaded)`
+  setTimeout(() => { mockUploadNotice.value = '' }, 4000)
+  e.target.value = '' // allow re-selecting the same file next time
+}
+
 async function checkIn(visitor) {
   try {
     await api.patch(`/visitors/${visitor.id}/checkin`)
     await refreshAll()
   } catch (err) {
-    console.error('Check-in failed', err)
+    showActionError(err.response?.data?.error || `Could not check in ${visitor.name}`)
   }
 }
 
@@ -219,7 +282,7 @@ async function checkOut(visitor) {
     await api.patch(`/visitors/${visitor.id}/checkout`)
     await refreshAll()
   } catch (err) {
-    console.error('Check-out failed', err)
+    showActionError(err.response?.data?.error || `Could not check out ${visitor.name}`)
   }
 }
 
@@ -228,7 +291,7 @@ async function rejectAtGate(visitor) {
     await api.patch(`/visitors/${visitor.id}/reject`)
     await refreshAll()
   } catch (err) {
-    console.error('Reject failed', err)
+    showActionError(err.response?.data?.error || `Could not reject ${visitor.name}`)
   }
 }
 
@@ -323,6 +386,8 @@ async function sendForApproval() {
         <span class="verify-label">Verify a visitor</span>
         <span class="verify-sub">Enter the gate pass code to check a visitor in</span>
       </div>
+      <button class="mock-upload-btn" @click="triggerMockUpload">📎</button>
+      <input ref="mockUploadInput" type="file" class="visually-hidden" @change="onMockUploadSelected" />
       <input
         v-model="passCode"
         type="text"
@@ -331,7 +396,11 @@ async function sendForApproval() {
         @keyup.enter="verify"
       />
       <button class="verify-btn" @click="verify">Verify</button>
+      
     </div>
+
+    <div v-if="mockUploadNotice" class="mock-upload-toast">{{ mockUploadNotice }}</div>
+    <div v-if="actionErrorNotice" class="mock-upload-toast action-error-toast">{{ actionErrorNotice }}</div>
 
     <!-- verify result modal -->
     <div v-if="verifyResult" class="modal-overlay" @click.self="closeVerifyModal">
@@ -357,6 +426,18 @@ async function sendForApproval() {
           </div>
         </template>
 
+        <template v-else-if="verifyResult.outcome === 'not_yet_valid'">
+          <div class="verify-modal-icon error">⏳</div>
+          <h3 class="verify-modal-title">Not Valid Yet</h3>
+          <p class="verify-modal-sub">
+            {{ verifyResult.message }}<span v-if="verifyResult.visitor"> — {{ verifyResult.visitor.name }}</span>
+          </p>
+          <div class="verify-modal-actions">
+            <button class="verify-modal-close" @click="closeVerifyModal">Close</button>
+            <button v-if="verifyResult.visitor" class="approve-modal-btn" @click="openUnexpectedForm(verifyResult.visitor.name)">Log unexpected visitor</button>
+          </div>
+        </template>
+
         <template v-else-if="verifyResult.outcome === 'already_in'">
           <div class="verify-modal-icon success">✓</div>
           <h3 class="verify-modal-title">Already Checked In</h3>
@@ -367,16 +448,12 @@ async function sendForApproval() {
           </div>
         </template>
 
-        <template v-else-if="verifyResult.outcome === 'already_used'">
-          <div class="verify-modal-icon error">✕</div>
-          <h3 class="verify-modal-title">Pass Already Used</h3>
-          <p class="verify-modal-sub">{{ verifyResult.visitor.name }} already checked out at {{ formatTime(verifyResult.visitor.check_out_time) }}. This code is single-use — ask the resident for a new one.</p>
-          <button class="verify-modal-close" @click="closeVerifyModal">Close</button>
-        </template>
-
-        <template v-else>
+        <template v-else-if="verifyResult.outcome === 're_entry' || verifyResult.outcome === 'valid'">
           <div class="verify-modal-icon success">✓</div>
-          <h3 class="verify-modal-title">Valid Pass</h3>
+          <h3 class="verify-modal-title">{{ verifyResult.outcome === 're_entry' ? 'Returning Visitor' : 'Valid Pass' }}</h3>
+          <p v-if="verifyResult.outcome === 're_entry'" class="verify-modal-sub">
+            {{ verifyResult.visitor.name }} checked out at {{ formatTime(verifyResult.visitor.check_out_time) }}. This pass is still valid — check them in again for re-entry.
+          </p>
           <div class="verify-detail-grid">
             <div class="verify-detail-row">
               <span class="vd-label">Visitor</span>
@@ -386,10 +463,22 @@ async function sendForApproval() {
               <span class="vd-label">Reason</span>
               <span class="vd-value">{{ verifyResult.visitor.reason || '—' }}</span>
             </div>
-            <!-- NOTE: backend's visitor_to_security_dict does not return resident
-                 name or flat — only resident_id. These rows are left out rather
-                 than showing blank/wrong data. Add resident_name/flat to that
-                 serializer if you want them displayed here. -->
+            <div class="verify-detail-row">
+              <span class="vd-label">Resident</span>
+              <span class="vd-value">{{ verifyResult.visitor.resident_name || '—' }}</span>
+            </div>
+            <div class="verify-detail-row">
+              <span class="vd-label">Flat No.</span>
+              <span class="vd-value">{{ verifyResult.visitor.flat_number || '—' }}</span>
+            </div>
+            <div class="verify-detail-row">
+              <span class="vd-label">Unit</span>
+              <span class="vd-value">{{ verifyResult.visitor.unit_number || '—' }}</span>
+            </div>
+            <div class="verify-detail-row">
+              <span class="vd-label">Floor</span>
+              <span class="vd-value">{{ verifyResult.visitor.floor ?? '—' }}</span>
+            </div>
             <div v-if="verifyResult.visitor.vehicle_number" class="verify-detail-row">
               <span class="vd-label">Vehicle</span>
               <span class="vd-value">{{ verifyResult.visitor.vehicle_number }}</span>
@@ -397,6 +486,14 @@ async function sendForApproval() {
             <div class="verify-detail-row">
               <span class="vd-label">Pass Code</span>
               <span class="vd-value code">{{ verifyResult.visitor.pass_code }}</span>
+            </div>
+            <div class="verify-detail-row">
+              <span class="vd-label">Usage</span>
+              <span class="vd-value">{{ usageLabel(verifyResult.visitor) }}</span>
+            </div>
+            <div class="verify-detail-row">
+              <span class="vd-label">Validity</span>
+              <span class="vd-value">{{ validityLabel(verifyResult.visitor) }}</span>
             </div>
             <div class="verify-detail-row">
               <span class="vd-label">Valid Till</span>
@@ -541,7 +638,7 @@ async function sendForApproval() {
         <div class="visitor-avatar">{{ visitor.name.charAt(0) }}</div>
         <div class="visitor-info">
           <span class="visitor-name">{{ visitor.name }}</span>
-          <span class="visitor-meta">{{ visitor.reason || '—' }}</span>
+          <span class="visitor-meta">{{ visitor.reason || '—' }} · {{ usageLabel(visitor) }}</span>
         </div>
         <div class="visitor-code-block">
           <span v-if="visitor.pass_code" class="visitor-code">{{ visitor.pass_code }}</span>
@@ -697,6 +794,21 @@ async function sendForApproval() {
 }
 
 .verify-btn:hover { opacity: 0.85; }
+
+.mock-upload-btn {
+  height: 25px;
+  padding: 0 6px;
+  border-radius: var(--radius-md);
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  color: #fff;
+  font-weight: 700;
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all var(--transition-fast);
+}
+.mock-upload-btn:hover { background: rgba(255, 255, 255, 0.12); border-color: #fff; }
 
 .modal-overlay {
   position: fixed;
@@ -1108,4 +1220,31 @@ async function sendForApproval() {
 .log-badge.checked_in { background: var(--color-success-bg); color: var(--color-success-text); }
 .log-badge.checked_out{ background: var(--color-bg);         color: var(--color-text-muted);   }
 .log-badge.rejected   { background: var(--color-danger-bg);  color: var(--color-danger-text);  }
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.mock-upload-toast {
+  margin-bottom: 20px;
+  padding: 10px 16px;
+  border-radius: var(--radius-md);
+  background: var(--color-info-bg);
+  color: var(--color-info-text);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.action-error-toast {
+  background: var(--color-danger-bg);
+  color: var(--color-danger-text);
+}
 </style>

@@ -39,5 +39,26 @@ class Visitor(db.Model):
     # or a timed-out one.
     revoked    = db.Column(db.Boolean, default=False, nullable=False)
     revoked_at = db.Column(db.DateTime, nullable=True)
+
+    # ADDED — whether the pass can be used for repeat entries (e.g. a
+    # maid/driver) rather than a single visit. Independent of
+    # validity_mode below — either use-type can pick any validity mode.
+    is_multi_use = db.Column(db.Boolean, default=True, nullable=False)
+
+    # ADDED — optional end date for an open-ended (no_date) multi-use
+    # pass. Only meaningful when validity_mode == 'no_date'; for
+    # exact_date/until_date passes, expected_date drives expiry instead.
+    valid_until = db.Column(db.Date, nullable=True)
+
+    # ADDED — the date window a pre-registered pass is usable in:
+    #   exact_date — usable only on expected_date, not before, not after
+    #   until_date — usable any time up through the end of expected_date
+    #   no_date    — no expected_date required; open-ended (or bound by
+    #                the optional valid_until above)
+    validity_mode = db.Column(
+        db.Enum('exact_date', 'until_date', 'no_date', name='visitor_validity_mode'),
+        default='no_date',
+        nullable=False,
+    )
     def __repr__(self):
         return f'<Visitor {self.name} ({self.status})>'

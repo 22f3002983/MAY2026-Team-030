@@ -237,6 +237,7 @@ const EVENT_TYPES = [
 // PAGE STATE
 // =============================================================================
 const successMsg = ref('')
+const actionError = ref('')
 const showBookingsHistory = ref(false)
 
 
@@ -251,7 +252,11 @@ const infraAmenities = computed(() => amenities.value.filter(a => a.category ===
 
 function handleCancel(booking) {
   if (confirm(`Cancel your booking for ${booking.amenity.name} on ${booking.start_date}?`)) {
-    cancelBookingApi(booking.id)
+    actionError.value = ''
+    cancelBookingApi(booking.id).catch((err) => {
+      actionError.value = err.response?.data?.error || 'Could not cancel this booking.'
+      setTimeout(() => actionError.value = '', 4500)
+    })
   }
 }
 
@@ -259,9 +264,13 @@ function handleCancel(booking) {
 
 
 function handlePay(booking) {
+  actionError.value = ''
   payForBookingApi(booking.id).then(() => {
     successMsg.value = `Payment received — ${booking.amenity.name} is confirmed.`
     setTimeout(() => successMsg.value = '', 4500)
+  }).catch((err) => {
+    actionError.value = err.response?.data?.error || 'Payment could not be recorded.'
+    setTimeout(() => actionError.value = '', 4500)
   })
 }
 
@@ -525,6 +534,7 @@ onMounted(() => {
 
 
     <div v-if="successMsg" class="success-banner">✓ {{ successMsg }}</div>
+    <div v-if="actionError" class="error-banner">{{ actionError }}</div>
 
 
 
@@ -886,6 +896,12 @@ onMounted(() => {
 .success-banner {
   background: var(--color-success-bg); color: var(--color-success-text);
   border: 1px solid var(--color-success); border-radius: var(--radius-md);
+  padding: 12px 16px; font-size: var(--font-size-md); font-weight: 600; margin-bottom: 20px;
+}
+
+.error-banner {
+  background: var(--color-danger-bg, #fdecea); color: var(--color-danger-text, #b3261e);
+  border: 1px solid var(--color-danger, #b3261e); border-radius: var(--radius-md);
   padding: 12px 16px; font-size: var(--font-size-md); font-weight: 600; margin-bottom: 20px;
 }
 
